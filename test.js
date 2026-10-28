@@ -299,9 +299,10 @@ const snap = () => { const out = {}; const walk = d => { for (const e of fs.read
     rv = await (await vpc('/api/review/' + libRow.id, { method: 'PUT', json: { marks: { A2: { marks: '4', remark: 'access proof partial' } }, notes: { 'approval:strengths': { text: 'Good automation work' }, 'control:1': { text: 'checked' } } } })).json();
     assert.deepEqual([rv.can.finalise, rv.notes['approval:strengths'].text, rv.deviation.changes[0].change], [true, 'Good automation work', -4]);
     assert.equal((await (await lib('/api/my')).json()).items[0].status, 'submitted'); assert.equal((await lib('/api/review/list')).status, 403);   // the Librarian does not review
-    // the HoD's own form has nothing compulsory: an empty form can be submitted and scores 0
-    await hod('/api/my/S1/open', { method: 'POST' }); const hs = await hod('/api/my/S1/submit', { method: 'POST' }); assert.equal(hs.status, 200);
-    const hodRow = (await (await pr('/api/review/list')).json()).find(x => x.kind === 'hod' && x.owner === 'hodcse2'); assert.ok(hodRow && hodRow.status === 'submitted' && hodRow.self === 0);
+    // the HoD fills one form for the whole academic year (no semesters), with nothing compulsory: an empty form can be submitted and scores 0
+    assert.deepEqual((await (await hod('/api/my')).json()).items.map(x => x.term + ':' + x.status), ['year:not started']); assert.equal((await hod('/api/my/S1/open', { method: 'POST' })).status, 404);
+    await hod('/api/my/year/open', { method: 'POST' }); const hs = await hod('/api/my/year/submit', { method: 'POST' }); assert.equal(hs.status, 200);
+    const hodRow = (await (await pr('/api/review/list')).json()).find(x => x.kind === 'hod' && x.owner === 'hodcse2'); assert.ok(hodRow && hodRow.status === 'submitted' && hodRow.self === 0 && hodRow.term === '');
     console.log('OK – scoring rules, logins, staff appraisals read from the staff folder (untouched), review chain, own appraisals');
   } finally { srv.kill(); fs.rmSync(tmp, { recursive: true, force: true }); fs.rmSync(staffDir, { recursive: true, force: true }); await dropDb().catch(e => console.error('could not drop the test database:', e.message)); }
 })().catch(e => { console.error(e); process.exit(1); });

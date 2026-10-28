@@ -31,29 +31,29 @@
   const SEM = ['Semester 1', 'Semester 2'];
   const DEPTS = ['CSE', 'AI&DS', 'IT', 'EEE', 'ECE', 'MECH', 'CIVIL', 'S&H'];
 
-  // ================= HoD (one form per semester; reviewed by the Vice Principal / Principal)
+  // ================= HoD (one form per academic year; reviewed by the Vice Principal / Principal)
   const HOD = {
-    kind: 'hod', title: 'Self-Appraisal Form – Head of the Department', period: 'semester', reviewer: 'Principal',
+    kind: 'hod', title: 'Self-Appraisal Form – Head of the Department', period: 'year', reviewer: 'Principal',
     optional: true,   // nothing is compulsory: fill what applies, anything left empty gets 0 marks, submit any time
-    intro: 'Fill one form per semester. Nothing is compulsory: fill in what applies to you; a section left empty gets 0 marks. The marks for each level are given in the scoring sheet itself. Number your proofs as A1-01, A1-02, B1-01 … and attach them in that order.',
+    intro: 'Fill one form for the whole academic year. Nothing is compulsory: fill in what applies to you; a section left empty gets 0 marks. The marks for each level are given in the scoring sheet itself. Number your proofs as A1-01, A1-02, B1-01 … and attach them in that order.',
     p1: [{ k: 'name', label: 'Name' }, { k: 'faculty_id', label: 'Faculty ID' }, { k: 'designation', label: 'Designation' }, { k: 'dept', label: 'Department', type: 'select', options: DEPTS },
       { k: 'charge_date', label: 'Date of taking charge as HoD', type: 'date' }, { k: 'courses', label: 'Courses handled', long: true }, { k: 'strength', label: 'No. of faculty / students in the department' }],
     domains: { A: 'Academics and Department Results', B: 'Research and Faculty Development', C: 'Accreditation and Department Administration', D: 'Placement, Admissions and Industry', E: 'Contribution to College' },
     ind: [
-      pct('A1', 'A', 'Department university results', 10, 'Average pass % of all courses offered by the department this semester.', 'Department result analysis',
+      pct('A1', 'A', 'Department university results', 10, 'Average pass % of all courses offered by the department this academic year.', 'Department result analysis',
         '90% and above = 10 | 85 – 89% = 9 | 80 – 84% = 8 | 70 – 79% = 6 | 60 – 69% = 4 | Below 60% = 0', 'Department pass %', [[90, 10], [85, 9], [80, 8], [70, 6], [60, 4], [0, 0]]),
-      pct('A2', 'A', 'Own subject results', 5, 'Average pass % in the subjects you handled this semester.', 'University result',
+      pct('A2', 'A', 'Own subject results', 5, 'Average pass % in the subjects you handled this academic year.', 'University result',
         '90% and above = 5 | 85 – 89% = 4 | 80 – 84% = 3 | 70 – 79% = 2 | 60 – 69% = 1 | Below 60% = 0', 'Own pass %', [[90, 5], [85, 4], [80, 3], [70, 2], [60, 1], [0, 0]]),
       pct('A3', 'A', 'Academic monitoring', 10, '% of department faculty whose lesson plan, course file, attendance and internal tests were checked, with a written action report.', 'Audit checklist and action report',
         '100% = 10 | 90 – 99% = 8 | 80 – 89% = 6 | 70 – 79% = 4 | 50 – 69% = 2 | Below 50% = 0', 'Faculty audited %', [[100, 10], [90, 8], [80, 6], [70, 4], [50, 2], [0, 0]]),
       num('A4', 'A', 'Department academic initiatives', 10, 'Department-level initiatives completed with student list and outcome (remedial / bridge course, value-added course, slow / advanced learner programme, etc.).', 'Circular, report, outcome data',
         '5 or more = 10 | 4 = 8 | 3 = 6 | 2 = 4 | 1 = 2 | None = 0', 'No. of initiatives', [[5, 10], [4, 8], [3, 6], [2, 4], [1, 2], [0, 0]], { step: 1 }),
-      num('B1', 'B', 'Department publications', 8, 'Scopus / WoS-indexed papers by department faculty with NSCET affiliation this semester.', 'Publication list with DOI',
+      num('B1', 'B', 'Department publications', 8, 'Scopus / WoS-indexed papers by department faculty with NSCET affiliation this academic year.', 'Publication list with DOI',
         '6 or more = 8 | 5 = 7 | 4 = 6 | 3 = 4 | 1 – 2 = 2 | None = 0', 'No. of papers', [[6, 8], [5, 7], [4, 6], [3, 4], [1, 2], [0, 0]], { step: 1 }),
       points('B2', 'B', 'Own research', 4, 'Add points for your own papers: Q1/Q2 = 4, Q3/Q4 = 3, Scopus/WoS = 2, UGC-CARE = 1.', 'First page, DOI, index proof',
         '4 or more points = 4 | 3 points = 3 | 2 points = 2 | 1 point = 1 | 0 points = 0',
         [{ l: 'Q1 / Q2 journal (4 points)', p: 4 }, { l: 'Q3 / Q4 journal (3 points)', p: 3 }, { l: 'Scopus / WoS (2 points)', p: 2 }, { l: 'UGC-CARE (1 point)', p: 1 }], [[4, 4], [3, 3], [2, 2], [1, 1], [0, 0]]),
-      pct('B3', 'B', 'Faculty development', 8, '% of department faculty who completed at least one FDP / STTP or NPTEL course this semester.', 'Faculty-wise FDP / NPTEL list',
+      pct('B3', 'B', 'Faculty development', 8, '% of department faculty who completed at least one FDP / STTP or NPTEL course this academic year.', 'Faculty-wise FDP / NPTEL list',
         '80% and above = 8 | 70 – 79% = 7 | 60 – 69% = 6 | 50 – 59% = 4 | 30 – 49% = 2 | Below 30% = 0', 'Faculty covered %', [[80, 8], [70, 7], [60, 6], [50, 4], [30, 2], [0, 0]]),
       // Accreditation readiness (8 marks) removed after validation: its marks went 4 + 4 to the two sections below (6 -> 10 each, the A3 bands)
       pct('C1', 'C', 'Meetings and records', 10, '% of scheduled department meetings held with minutes and action-taken report (staff meeting, class committee, DAB, PAC, etc.).', 'Minutes and action-taken reports',
@@ -70,16 +70,16 @@
       points('E1', 'E', 'Institutional duties', 5, 'Add points: major college activity as coordinator (IQAC, IIC, R&D, EDC, NBA/NAAC, club) = 2, support role = 1.', 'Office order / minutes',
         '5 or more points = 5 | 4 points = 4 | 3 points = 3 | 2 points = 2 | 1 point = 1 | 0 points = 0',
         [{ l: 'Major college activity as coordinator (2 points)', p: 2 }, { l: 'Support role (1 point)', p: 1 }], [[5, 5], [4, 4], [3, 3], [2, 2], [1, 1], [0, 0]]),
-      num('E2', 'E', 'Student achievements', 5, 'Department student achievements this semester: prizes in hackathons / competitions, papers, patents, funded projects.', 'Certificates / proofs',
+      num('E2', 'E', 'Student achievements', 5, 'Department student achievements this academic year: prizes in hackathons / competitions, papers, patents, funded projects.', 'Certificates / proofs',
         '6 or more = 5 | 4 – 5 = 4 | 3 = 3 | 2 = 2 | 1 = 1 | None = 0', 'No. of achievements', [[6, 5], [4, 4], [3, 3], [2, 2], [1, 1], [0, 0]], { step: 1 }),
     ],
     checks: ['Proof checked for every claim and proof numbers match the Proof index', 'Result analysis and academic audit records checked (A1–A4)', 'Publication and FDP data checked (B1–B3)',
       'Minutes and mentor records checked (C1–C2)', 'Placement and admission figures confirmed by the respective offices (D1–D2)', 'Duties and student achievement proofs checked (E1–E2)', 'Reason written for every mark changed'],
     declaration: 'I declare that the details given are correct, the proofs are genuine, and no item is claimed twice.',
     signatures: ['HoD', 'Vice-Principal', 'IQAC', 'Principal'],
-    notes: ['Round percentages to the nearest whole number.', 'Claim only work done in this semester. Except B1 / B2, claim each item once, under one sub-indicator only. A claim without proof gets 0 marks.',
+    notes: ['Round percentages to the nearest whole number.', 'Claim only work done in this academic year. Except B1 / B2, claim each item once, under one sub-indicator only. A claim without proof gets 0 marks.',
       'Department figures (A1, A3, A4, B1, B3, C1–C2, D1–D3, E2) are the department’s; own figures (A2, B2, E1) are yours. A paper may count in both B1 and B2.',
-      'Annual score = average of the two verified semester scores.', 'Rating: 90–100 Outstanding; 80–89 Excellent; 70–79 Very Good; 60–69 Satisfactory; below 60 Needs Improvement. Outstanding also needs at least 21 out of 35 in Domain A.'],
+      'Rating: 90–100 Outstanding; 80–89 Excellent; 70–79 Very Good; 60–69 Satisfactory; below 60 Needs Improvement. Outstanding also needs at least 21 out of 35 in Domain A.'],
     outstandingNeeds: { domain: 'A', min: 21 },
   };
 

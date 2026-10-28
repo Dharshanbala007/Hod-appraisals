@@ -34,15 +34,32 @@ Settings (environment variables, all optional):
 
 Check: `curl http://localhost:3001/healthz` must show `"ok":true` and `"staffFound":true`.
 
-nginx: give it its own address and pass it to port 3001, with room for 10 MB proofs:
+### The address: appraisal.nscet.org
 
-```nginx
-server {
-    server_name hod.nscet.org;            # the address chosen for this site
-    client_max_body_size 12m;
-    location / { proxy_pass http://127.0.0.1:3001; proxy_set_header Host $host; proxy_set_header X-Forwarded-Proto $scheme; }
-}
-```
+It must be the **same server** as facultysa.nscet.org, because the staff appraisals are read from that site's folder.
+
+1. DNS: add an `A` record `appraisal` → the server's public IP (the same IP as `facultysa`).
+2. nginx: create `/etc/nginx/sites-available/appraisal.nscet.org` (port 3001, room for 10 MB proofs):
+   ```nginx
+   server {
+       listen 80;
+       server_name appraisal.nscet.org;
+       client_max_body_size 12m;
+       location / {
+           proxy_pass http://127.0.0.1:3001;
+           proxy_set_header Host $host;
+           proxy_set_header X-Forwarded-Proto $scheme;
+           proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+       }
+   }
+   ```
+   then switch it on:
+   ```bash
+   sudo ln -s /etc/nginx/sites-available/appraisal.nscet.org /etc/nginx/sites-enabled/ && sudo nginx -t && sudo systemctl reload nginx
+   ```
+3. HTTPS (once DNS points to the server): `sudo certbot --nginx -d appraisal.nscet.org`.
+
+Open https://appraisal.nscet.org: the login page must appear. Logins then get a secure cookie over HTTPS by themselves.
 
 ## Database on the server
 
