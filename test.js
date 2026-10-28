@@ -176,6 +176,8 @@ const snap = () => { const out = {}; const walk = d => { for (const e of fs.read
 
 (async () => {
   await authTests();
+  assert.equal(fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8').replace(/\r\n/g, '\n'),
+    require('child_process').execFileSync('node', ['db-setup.js', '--sql'], { cwd: __dirname, encoding: 'utf8' }));   // schema.sql = the tables db.js makes
   await freshDb();
   let srv = await boot();
   try {

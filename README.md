@@ -10,18 +10,18 @@ Physical Director**, separate from the staff site (facultysa.nscet.org).
 - **Review**: HoD → Vice Principal / Principal → Secretary, with marks and remarks per section, the deviation, Proceed / Finalise, and an
   audit log. The HoD sees the submitted staff appraisals of their department.
 
-Logins, own appraisals and review marks are kept in a database: a file `UPLOADS/appraisal.sqlite` by default (Node 22.5 or newer), or the
-college MySQL / MariaDB when `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME` are set in `.env.local`.
+Logins, own appraisals and review marks are kept in a database: **MySQL / MariaDB** on the server (see [Database](#database-on-the-server)),
+or, without database settings, a file `UPLOADS/appraisal.sqlite` (needs Node 22.13 or newer; fine for trying it out).
 
 ## Install on the college server (beside the staff site)
 
 ```bash
 cd /var/www && git clone https://github.com/Dharshanbala007/Hod-appraisals.git hod-appraisals
 cd /var/www/hod-appraisals && npm install --omit=dev
-node server.js
 ```
 
-The first start creates the tables and prints the logins it made. Stop it (Ctrl+C) and run it as a service, as the staff site is, for
+Set up the [database](#database-on-the-server), then run `node server.js`. The first start creates any missing tables and prints the
+logins it made. Stop it (Ctrl+C) and run it as a service, as the staff site is, for
 example `pm2 start server.js --name hod-appraisals`. The user that runs it must be able to **read** `/var/www/appraisal-web/UPLOADS`.
 
 Settings (environment variables, all optional):
@@ -43,6 +43,44 @@ server {
     location / { proxy_pass http://127.0.0.1:3001; proxy_set_header Host $host; proxy_set_header X-Forwarded-Proto $scheme; }
 }
 ```
+
+## Database on the server
+
+Do this once, before the first start. The tables are in [`schema.sql`](schema.sql): `accounts`, `appraisals`, `review_marks`,
+`review_notes`, `audit_log` (the comments at its top say what each holds).
+
+1. A database server. Check with `mysql --version`; if there is none, install MariaDB (MySQL-compatible):
+   ```bash
+   sudo apt update && sudo apt install -y mariadb-server && sudo systemctl enable --now mariadb
+   ```
+2. The database and a user for this site only. Open `sudo mysql` and run, with a strong password of your own instead of `CHANGE-ME`:
+   ```sql
+   CREATE DATABASE nscet_appraisal CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+   CREATE USER 'appraisal'@'localhost' IDENTIFIED BY 'CHANGE-ME';
+   GRANT ALL PRIVILEGES ON nscet_appraisal.* TO 'appraisal'@'localhost';
+   FLUSH PRIVILEGES;
+   EXIT;
+   ```
+3. The tables (the site also makes them itself on its first start; doing it here lets you check them first):
+   ```bash
+   cd /var/www/hod-appraisals && mysql -u appraisal -p nscet_appraisal < schema.sql
+   ```
+4. Tell the site where the database is: create `/var/www/hod-appraisals/.env.local` (never committed; keep it private with
+   `chmod 600 .env.local`):
+   ```
+   DB_HOST=localhost
+   DB_PORT=3306
+   DB_USER=appraisal
+   DB_PASSWORD=CHANGE-ME
+   DB_NAME=nscet_appraisal
+   ```
+5. Start (or restart) the site. `curl http://localhost:3001/healthz` must now show `"storage":"mysql"`, and the first start prints the
+   logins it made.
+
+Backups: the database (`mysqldump -u appraisal -p nscet_appraisal > hod-appraisals-$(date +%F).sql`) and the folder
+`/var/www/hod-appraisals/UPLOADS` (the proofs of the HoD / VP / Principal / officer forms). The staff files stay with the staff site.
+
+If the tables in `db.js` change, make the file again with `node db-setup.js --sql > schema.sql` (`node test.js` fails until they match).
 
 ## Logins
 

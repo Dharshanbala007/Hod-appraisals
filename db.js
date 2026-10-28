@@ -1,6 +1,6 @@
 // Every database query of the site, in one place. Two kinds of database, the same tables and functions:
-//   - for now: a database file on this computer (SQLite, built into Node 22.5+): UPLOADS/appraisal.sqlite (or DB_FILE). No setup.
-//   - later:   the college MySQL / MariaDB, when DB_HOST is set in .env.local (with DB_PORT, DB_USER, DB_PASSWORD, DB_NAME).
+//   - without settings: a database file (SQLite, built into Node 22.13+): UPLOADS/appraisal.sqlite (or DB_FILE). No setup.
+//   - on the server: MySQL / MariaDB, when DB_HOST is set in .env.local (with DB_PORT, DB_USER, DB_PASSWORD, DB_NAME).
 // The form content is kept as JSON text in appraisals.data (the same shape the form.json files had); a few columns repeat what lists need.
 // Proof files and PDFs stay in UPLOADS; appraisals.folder says where.
 require('./env.js');
@@ -37,7 +37,7 @@ const ROLES = Object.keys(C.ROLES);
 
 // ---- tables (MySQL 5.7+ / MariaDB 10.2+, or SQLite). JSON is stored as text so every database behaves the same.
 const T = 'ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci';
-const SCHEMA = MYSQL ? [
+const MYSQL_SCHEMA = [
   `CREATE TABLE IF NOT EXISTS accounts (id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY, username VARCHAR(40) NOT NULL, name VARCHAR(100) NOT NULL,
     role ENUM(${list(ROLES)}) NOT NULL, dept VARCHAR(10) NULL, password_hash VARCHAR(255) NOT NULL, active TINYINT(1) NOT NULL DEFAULT 1, must_change TINYINT(1) NOT NULL DEFAULT 0,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, UNIQUE KEY username (username)) ${T}`,
@@ -56,7 +56,7 @@ const SCHEMA = MYSQL ? [
     CONSTRAINT fk_notes_appraisal FOREIGN KEY (appraisal_id) REFERENCES appraisals (id) ON DELETE CASCADE) ${T}`,
   `CREATE TABLE IF NOT EXISTS audit_log (id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY, at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, who VARCHAR(40) NOT NULL,
     action VARCHAR(40) NOT NULL, appraisal_id INT UNSIGNED NULL, detail TEXT NULL, KEY by_appraisal (appraisal_id)) ${T}`,
-] : [
+], SQLITE_SCHEMA = [
   `CREATE TABLE IF NOT EXISTS accounts (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT NOT NULL COLLATE NOCASE UNIQUE, name TEXT NOT NULL,
     role TEXT NOT NULL CHECK (role IN (${list(ROLES)})), dept TEXT NULL, password_hash TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1, must_change INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
@@ -76,6 +76,7 @@ const SCHEMA = MYSQL ? [
     action TEXT NOT NULL, appraisal_id INTEGER NULL, detail TEXT NULL)`,
   'CREATE INDEX IF NOT EXISTS by_appraisal ON audit_log (appraisal_id)',
 ];
+const SCHEMA = MYSQL ? MYSQL_SCHEMA : SQLITE_SCHEMA;
 const run = s => (MYSQL ? mysql().query(s) : sqlite().exec(s));
 const setup = async () => {   // safe to run again
   for (const s of SCHEMA) await run(s);
@@ -143,4 +144,4 @@ const ping = () => q('SELECT 1 AS ok');
 const close = async () => { if (pool) { const p = pool; pool = null; await p.end(); } if (lite) { lite.close(); lite = null; } };
 const where = () => (MYSQL ? `MySQL database "${process.env.DB_NAME || 'nscet_appraisal'}" on ${process.env.DB_HOST}` : `database file ${FILE}`);
 
-module.exports = { MYSQL, setup, find, all, save, create, byId, listOf, setStatus, setFinal, marksOf, setMark, clearMark, notesOf, setNote, auditOf, findAccount, listAccounts, addAccount, setPassword, hasRole, setActive, activeHod, audit, ping, close, where };
+module.exports = { MYSQL, MYSQL_SCHEMA, setup, find, all, save, create, byId, listOf, setStatus, setFinal, marksOf, setMark, clearMark, notesOf, setNote, auditOf, findAccount, listAccounts, addAccount, setPassword, hasRole, setActive, activeHod, audit, ping, close, where };
