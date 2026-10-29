@@ -106,7 +106,7 @@ The first start makes one login per HoD and role, each with a **one-time passwor
 | Username | One-time password |
 |---|---|
 | `hodcse`, `hodaids`, `hodit`, `hodeee`, `hodece`, `hodmech`, `hodcivil`, `hodsh` | `hod@nscet` |
-| `vp`, `principal`, `secretary`, `po`, `pc`, `librarian`, `pd` | `<username>@nscet` (e.g. `principal@nscet`) |
+| `vp`, `principal`, `secretary`, `po`, `pc`, `pc2`, `pc3`, `librarian`, `pd` | `<username>@nscet` (e.g. `principal@nscet`, `pc2@nscet`) |
 
 More logins, forgotten passwords:
 

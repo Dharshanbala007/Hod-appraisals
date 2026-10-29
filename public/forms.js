@@ -28,7 +28,6 @@
     pick: { label: 'Evidence level (self-rating)', options: [['Fully evidenced and timely', 1], ['Substantial', 0.7], ['Partial', 0.4], ['Weak or unsupported', 0]].map(([l, f]) => ({ l: `${l} (${r1(max * f)} marks)`, p: r1(max * f) })) },
     groups: [{ id: 'r', single: true, fields: [{ k: 'details', label: 'Details: target vs achieved, activities, dates, outcomes' }] }], scoring: { kind: 'pick' } });
 
-  const SEM = ['Semester 1', 'Semester 2'];
   const DEPTS = ['CSE', 'AI&DS', 'IT', 'EEE', 'ECE', 'MECH', 'CIVIL', 'S&H'];
 
   // ================= HoD (one form per academic year; reviewed by the Vice Principal / Principal)
@@ -131,7 +130,7 @@
     outstandingNeeds: { domain: 'A', min: 18 },
   });
 
-  // ================= the four support-staff forms (one form per semester; reviewed by the Vice Principal / Principal)
+  // ================= the four support-staff forms (one form per academic year; reviewed by the Vice Principal / Principal)
   const SUPPORT_P1 = (section, designation) => [
     { k: 'section', label: 'Name of the Department / Section', ...(section ? { value: section } : { type: 'select', options: DEPTS }) },
     { k: 'name', label: 'Name of the Employee' }, { k: 'employee_id', label: 'Employee ID' }, { k: 'designation', label: 'Present Designation', value: designation },
@@ -141,15 +140,15 @@
   const PROFILE = [
     { id: 'qualifications', title: 'Profile (information only – not scored): qualifications', columns: [['degree', 'Degree / Certificate'], ['specialization', 'Specialization'], ['institution', 'Institution / University'], ['year', 'Year'], ['grade', '% / Grade'], ['remarks', 'Remarks']] },
     { id: 'positions', title: 'Profile (information only – not scored): positions held', columns: [['position', 'Position held'], ['organization', 'Institution / Organization'], ['from', 'From'], ['to', 'To'], ['years', 'Years']] }];
-  const TARGETS = { id: 'targets', title: 'Targets agreed at the start of the semester (planning record only; carries no marks)', columns: [['indicator', 'Indicator'], ['description', 'Target description'], ['target', 'Agreed target (number / %)']] };
-  const SELF_REVIEW = [['achievements', 'Three major achievements'], ['improve', 'Areas needing improvement / support'], ['next_targets', 'Proposed targets for next semester']];
+  const TARGETS = { id: 'targets', title: 'Targets agreed at the start of the academic year (planning record only; carries no marks)', columns: [['indicator', 'Indicator'], ['description', 'Target description'], ['target', 'Agreed target (number / %)']] };
+  const SELF_REVIEW = [['achievements', 'Three major achievements'], ['improve', 'Areas needing improvement / support'], ['next_targets', 'Proposed targets for the next academic year']];
   const DECL_SUPPORT = 'I certify that the claims made in this form are accurate, the evidence enclosed is genuine, no activity has been counted twice, and the work was completed during the review period.';
   const APPROVAL = [['response', 'Employee response / appeal disposition'], ['strengths', 'Strengths and achievements'], ['priorities', 'Three development priorities'], ['training', 'Training / support approved'],
     ['recommendation', 'Principal recommendation'], ['management', 'Management approval'], ['next_review', 'Next review date']];
-  const SUPPORT_NOTES = ['Quantitative indicators: Marks = Max × (Achieved ÷ Agreed target), capped at Max. Other indicators (rated against evidence): fully evidenced and timely = 100% of Max; substantial = 70%; partial = 40%; weak or unsupported = 0. No marks without evidence. The same activity cannot be claimed under two indicators. Targets are agreed with the reporting officer at the start of the semester.',
-    'Annual score = average of the two verified semester scores. Rating: 90–100 Outstanding | 80–89.9 Excellent | 70–79.9 Very Good | 60–69.9 Satisfactory | below 60 Needs Improvement. The rating is advisory and is not an automatic pay or promotion decision.'];
+  const SUPPORT_NOTES = ['Quantitative indicators: Marks = Max × (Achieved ÷ Agreed target), capped at Max. Other indicators (rated against evidence): fully evidenced and timely = 100% of Max; substantial = 70%; partial = 40%; weak or unsupported = 0. No marks without evidence. The same activity cannot be claimed under two indicators. Targets are agreed with the reporting officer at the start of the academic year.',
+    'Rating: 90–100 Outstanding | 80–89.9 Excellent | 70–79.9 Very Good | 60–69.9 Satisfactory | below 60 Needs Improvement. The rating is advisory and is not an automatic pay or promotion decision.'];
   const support = (kind, title, section, designation, domains, ind, annexures, controls) => ({
-    kind, title, period: 'semester', reviewer: 'Principal', intro: 'Semester form. ' + SUPPORT_NOTES[0],
+    kind, title, period: 'year', reviewer: 'Principal', intro: 'One form for the whole academic year. ' + SUPPORT_NOTES[0],
     p1: SUPPORT_P1(section, designation), domains, ind, tables: [TARGETS, ...PROFILE, ...annexures], selfReview: SELF_REVIEW, declaration: DECL_SUPPORT,
     controls, approval: APPROVAL, notes: SUPPORT_NOTES, signatures: ['Employee', 'Principal', 'IQAC Moderator', 'Secretary / Management'],
   });
@@ -239,7 +238,6 @@
       'Equipment stock register and facility condition verified', 'Injury, first-aid and safety records verified', 'Conflicts of interest or shared claims resolved']);
 
   const FORMS = { hod: HOD, vp: LEADER('vp'), principal: LEADER('principal'), po: PO, pc: PC, librarian: LIB, pd: PD };
-  const SEMESTERS = SEM;
-  const api = { FORMS, SEMESTERS };
+  const api = { FORMS };
   if (typeof module !== 'undefined') module.exports = api; else root.FORMS = api;
 })(typeof window !== 'undefined' ? window : globalThis);

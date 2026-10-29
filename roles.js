@@ -3,7 +3,7 @@
 //   /api/review/...  the review of appraisals by the HoD, Vice Principal, Principal and Secretary (who may do what: auth.can)
 // Reviewers' marks and remarks are kept per level (review_marks); the appraisee never sees them. Every change is written to the audit log.
 const path = require('path'), fsp = require('fs').promises;
-const C = require('./public/config.js'), { FORMS } = require('./public/forms.js'), Auth = require('./auth.js');
+const C = require('./public/config.js'), { FORMS } = require('./public/forms.js'), Auth = require('./auth.js'), { buildReport } = require('./report.js'), Dash = require('./dashboard.js');
 
 module.exports = function roles(app, h) {
   const { store, userOf, wrap, ROOT, STAFF, under, within, safeName, str, cleanValue, cleanInd, filesIn, dropUnused, storeUpload, sendProof, upload } = h;
@@ -100,13 +100,18 @@ module.exports = function roles(app, h) {
   const notesFor = kind => (kind === 'staff' ? C.CHECKS.map((c, i) => ({ key: 'check:' + (i + 1), label: c, yesno: true }))
     : FORMS[kind].checks ? FORMS[kind].checks.map((c, i) => ({ key: 'check:' + (i + 1), label: c, yesno: true }))
     : [...FORMS[kind].controls.map((c, i) => ({ key: 'control:' + (i + 1), label: c })), ...FORMS[kind].approval.map(([k, l]) => ({ key: 'approval:' + k, label: l, approval: true }))]);
-  async function review(row, u) {
-    const form = formOf(row.kind), levels = {};
-    for (const m of await store.marksOf(row.id)) {
+  // the reviewers' marks and remarks of an appraisal, by level: { hod: { ind: { A1: { marks, remark, by, at } }, overall } ... }
+  async function levelsOf(id) {
+    const levels = {};
+    for (const m of await store.marksOf(id)) {
       const L = levels[m.stage] = levels[m.stage] || { ind: {}, overall: null };
       if (m.section === 'overall') L.overall = { remark: m.remark || '', by: m.updated_by, at: m.updated_at };
       else L.ind[m.section] = { marks: m.marks == null ? null : Number(m.marks), remark: m.remark || '', by: m.updated_by, at: m.updated_at };
     }
+    return levels;
+  }
+  async function review(row, u) {
+    const form = formOf(row.kind), levels = await levelsOf(row.id);
     const full = { ...row.data, ...levels }, notes = {};
     for (const n of await store.notesOf(row.id)) notes[n.note_key] = { answer: n.answer || '', text: n.text || '', by: n.updated_by, at: n.updated_at };
     return { id: row.id, kind: row.kind, kindName: row.kind === 'staff' ? 'Staff' : C.ROLES[row.kind], owner: row.owner, name: row.name, dept: row.dept, term: row.term, status: row.status,
@@ -124,6 +129,46 @@ module.exports = function roles(app, h) {
     const rows = await store.listOf(kinds, req.user.role === 'hod' ? req.user.dept : null);
     res.json(rows.map(r => ({ id: Number(r.id), kind: r.kind, owner: r.owner, name: r.name, designation: r.designation, dept: r.dept, term: r.term, status: r.status,
       self: r.self_total == null ? null : Number(r.self_total), final: r.final_total == null ? (r.self_total == null ? null : Number(r.self_total)) : Number(r.final_total), canOpen: Auth.can(req.user, 'view', r) })));
+  }));
+  // the report of one list as a PDF (?kind=staff&d=CSE): the same appraisals the reviewer's list shows; drafts only as "not submitted yet"
+  const STATUS = { draft: 'Being filled', submitted: 'Submitted', proceeded: 'Proceeded by HoD', finalised: 'Finalised' };
+  // the analytics dashboards (dashboard.js), from the staff appraisals this login may open: a HoD gets their own department only (whatever is
+  // asked); the Vice Principal, Principal and Secretary get any department (?d=CSE) or the whole college, with the leaders' own appraisals
+  app.get('/api/dashboard', who, wrap(async (req, res) => {
+    const u = req.user; if (!['hod', 'vp', 'principal', 'secretary'].includes(u.role)) return res.status(403).json({ error: 'This login has no dashboard.' });
+    const dept = u.role === 'hod' ? u.dept : C.DEPARTMENTS.includes(req.query.d) ? req.query.d : '';
+    await syncStaff();
+    const items = [];
+    for (const r of await store.all('staff')) if ((!dept || r.dept === dept) && Auth.can(u, 'view', r))
+      items.push({ code: r.owner, name: r.name, designation: (r.data.p1 || {}).designation || '', dept: r.dept, data: r.data, levels: await levelsOf(r.id) });
+    if (dept) return res.json({ scope: 'dept', dept, ...Dash.department(items) });
+    const kinds = LIST[u.role].filter(k => k !== 'staff'), rows = await store.listOf(kinds, null), leaders = [];
+    for (const a of (await store.listAccounts()).filter(a => a.active && kinds.includes(a.role)).sort((x, y) => C.KINDS.indexOf(x.role) - C.KINDS.indexOf(y.role))) {
+      const mine = rows.filter(r => r.kind === a.role && String(r.owner).toLowerCase() === a.username.toLowerCase());
+      for (const r of mine.length ? mine : [null]) { const open = !!r && Auth.can(u, 'view', r);
+        leaders.push({ role: C.ROLES[a.role], name: a.name, username: a.username, dept: a.dept || '', term: r ? r.term : '', status: r ? r.status : 'not started',
+          self: open ? Number(r.self_total) : null, final: open ? Number(r.final_total ?? r.self_total) : null }); }
+    }
+    res.json({ scope: 'college', ...Dash.college(items, leaders) });
+  }));
+  app.get('/api/review/report.pdf', who, wrap(async (req, res) => {
+    const u = req.user, kind = String(req.query.kind || ''), dept = str(req.query.d, 10);
+    if (!(LIST[u.role] || []).includes(kind)) return res.status(403).json({ error: 'This report is not available to your login.' });
+    if (kind === 'staff') await syncStaff();
+    const form = formOf(kind), rows = [];
+    for (const r of (await store.listOf([kind], u.role === 'hod' ? u.dept : null)).filter(r => !dept || r.dept === dept)) {
+      const t = Auth.can(u, 'view', r) ? (await review(await store.byId(r.id), u)).totals : null, sw = t ? C.strengths(t.rows, form.ind) : { weak: [], strong: [] };
+      rows.push({ code: r.owner, name: r.name || '-', designation: r.designation, status: STATUS[r.status] || r.status, self: t && t.self, final: t && t.final, weak: sw.weak, strong: sw.strong });
+    }
+    const done = rows.filter(x => x.self != null), avg = f => (done.length ? String(Math.round(done.reduce((s, x) => s + f(x), 0) / done.length * 10) / 10) : '-');
+    const what = (kind === 'staff' ? 'Staff' : C.ROLES[kind]) + (dept || u.dept ? ' – ' + (dept || u.dept) : '');
+    const pdf = await buildReport({ year: C.YEAR_LABEL, title: 'Appraisal Report – ' + what, by: `${u.name} (${C.ROLES[u.role]})`,
+      subtitle: `Academic year ${C.YEAR_FULL}  ·  generated ${C.when(new Date().toISOString())} by ${u.name} (${C.ROLES[u.role]})`,
+      summary: [['Listed', String(rows.length)], ['Submitted', String(done.length)], ['Not submitted yet', String(rows.length - done.length)],
+        ['Average self', avg(x => x.self)], ['Average final', avg(x => x.final)], ['Average change', done.length ? (n => (n > 0 ? '+' : '') + n)(Math.round(done.reduce((s, x) => s + x.final - x.self, 0) / done.length * 10) / 10) : '-']],
+      note: 'Self = the marks calculated from the entries; Final = after the review (HoD, Vice Principal, Principal, Secretary); Change = Final - Self. Weaker / stronger section = the section(s) with the lowest / highest share of their maximum marks in the final marks.',
+      rows });
+    res.type('pdf').set('Content-Disposition', `attachment; filename="Appraisal-Report-${what.replace(/[^A-Za-z0-9]+/g, '-')}-${C.YEAR}.pdf"`).send(pdf);
   }));
   app.get('/api/review/:aid', who, target, wrap(async (req, res) => res.json(await review(req.row, req.user))));
   app.get('/api/review/:aid/file/:stored', who, target, wrap(async (req, res) => sendProof(res, dirOf(req.row), req.row.data, req.params.stored)));

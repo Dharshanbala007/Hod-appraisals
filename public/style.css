@@ -119,3 +119,30 @@ table.lv { margin-top:12px; font-size:13px } table.lv td, table.lv th { padding:
 .scroll { overflow-x:auto } table.grid-t td { padding:4px } table.grid-t input { min-width:90px }
 .grid > .wide { grid-column:span 2 }
 @media (max-width:760px) { .kv, .nrow { grid-template-columns:1fr } .grid > .wide { grid-column:auto } main.wide .bar { position:static } }
+/* the report of a list (#rep=...): readable section names; printed on A4 landscape without the page's buttons */
+table.rep td { vertical-align:top } table.rep td div + div { margin-top:4px }
+@media print { @page { size:A4 landscape; margin:10mm } body { background:#fff } .userline, .tabs, .noprint { display:none !important } .card { box-shadow:none; border-color:#ccc } .report .scroll { overflow:visible } table.rep tr { break-inside:avoid } }
+/* the analytics dashboard (#t=dash): bars in one blue, the college comparison in blue (above) / orange (below), the heat grid light -> dark */
+.dsel { display:flex; align-items:center; gap:10px; margin:0 0 16px; font-size:14px } .dsel select { width:auto; min-width:200px }
+.dgrid { display:grid; grid-template-columns:1fr 1fr; gap:0 16px } .dgrid > .card { min-width:0 }
+.hrow { display:grid; grid-template-columns:minmax(0,1.3fr) minmax(0,1fr) 128px; gap:10px; align-items:center; padding:4px 0; font-size:13px }
+.hl { overflow:hidden; text-overflow:ellipsis; white-space:nowrap } .hv { font-variant-numeric:tabular-nums; white-space:nowrap; color:var(--muted-foreground) }
+.hb { height:10px; background:#eef3fb; border-radius:4px; overflow:hidden } .hb i { display:block; height:100%; background:#2a78d6; border-radius:0 4px 4px 0 }
+.dv { display:grid; grid-template-columns:1fr 1fr; height:10px } .dv .neg { display:flex; justify-content:flex-end; border-right:1px solid #9a9993 } .dv i { display:block; height:100% }
+.dv .neg i { background:#eb6834; border-radius:4px 0 0 4px } .dv .pos i { background:#2a78d6; border-radius:0 4px 4px 0 }
+.kpis { display:grid; grid-template-columns:repeat(auto-fit, minmax(140px, 1fr)); gap:10px } .kpi { border:1px solid var(--border); border-radius:10px; padding:10px 12px }
+.kv { font-size:22px; font-weight:650; font-variant-numeric:tabular-nums } .kl { font-size:12px; color:var(--muted-foreground) }
+.secl { font-size:13px; padding:3px 0 } table.heatt td.heat { text-align:center; font-variant-numeric:tabular-nums; font-size:12px; min-width:36px; border:2px solid var(--card) } td.heat.na { color:var(--muted-foreground) }
+.swatch { display:inline-block; width:12px; height:12px; border-radius:3px; vertical-align:middle; margin:0 4px 0 10px }
+@media (max-width:760px) { .dgrid { grid-template-columns:1fr } .hrow { grid-template-columns:minmax(0,1fr) 70px 112px } }
+/* dashboard charts: statistic tiles with a progress bar, column charts (SVG), strongest / weakest cards, the stage bar */
+.kpis.dk { margin:0 0 16px } .kb { height:6px; background:#eef3fb; border-radius:3px; margin-top:8px; overflow:hidden } .kb i { display:block; height:100%; background:#2a78d6; border-radius:0 3px 3px 0 } .kb.big { height:14px; border-radius:7px; margin:6px 0 10px }
+.big { font-size:40px; font-weight:700; letter-spacing:-.02em; font-variant-numeric:tabular-nums }
+svg.cols { width:100%; height:auto; max-height:260px; display:block; overflow:visible } svg.cols .cg { stroke:#efeeea } svg.cols .cb { stroke:#bdbcb6 } svg.cols .cr { stroke:#52514e; stroke-dasharray:6 5; stroke-width:1.5 }
+svg.cols .cv { font-size:13px; font-weight:600; text-anchor:middle; fill:#0a0a0a } svg.cols .cl { font-size:13px; text-anchor:middle; fill:#52514e } svg.cols .crt { font-size:12px; text-anchor:end; fill:#52514e }
+.ckey { display:flex; flex-wrap:wrap; gap:4px 14px; font-size:12px; color:var(--muted-foreground); margin:8px 0 0 } .ckey b { color:var(--foreground) }
+.hlc { border:1px solid var(--border); border-left:4px solid #0ca30c; border-radius:10px; padding:10px 14px; margin-bottom:12px } .hlc.weak { border-left-color:#fab219 }
+.hlh { font-size:12px; font-weight:600; color:var(--muted-foreground); margin-bottom:6px } .hls { display:flex; gap:12px; align-items:center; font-size:13px; padding:4px 0 } .hlp { font-size:22px; font-weight:700; min-width:64px; font-variant-numeric:tabular-nums }
+.stack { display:flex; height:16px; border-radius:8px; overflow:hidden; gap:2px; background:var(--card) } .stack i { display:block; height:100% }
+.legend { display:flex; flex-wrap:wrap; gap:6px 16px; font-size:13px; margin-top:8px } .legend .swatch { margin-left:0 }
+.refkey { display:inline-block; width:22px; border-top:2px dashed #52514e; vertical-align:middle; margin-right:6px }

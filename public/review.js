@@ -78,19 +78,21 @@ const TABS = () => [
   ['vp', 'principal', 'secretary'].includes(ME.role) && ['support', 'Placement, Library & Sports'],
   ['principal', 'secretary'].includes(ME.role) && ['vpf', 'Vice Principal'],
   ME.role === 'secretary' && ['prf', 'Principal'],
+  ['hod', 'vp', 'principal', 'secretary'].includes(ME.role) && ['dash', 'Dashboard'],
 ].filter(Boolean);
 async function home(tab, dept) {
   const tabs = TABS(); if (!tabs.some(t => t[0] === tab)) tab = tabs[0][0];
-  const body = tab === 'my' ? await myTab() : listTab(tab, await api('/api/review/list'), dept);
+  const body = tab === 'my' ? await myTab() : tab === 'dash' ? await dashTab(dept) : listTab(tab, await api('/api/review/list'), dept);
   LAST = location.hash || '#';
   app.onclick = app.oninput = app.onchange = null;
   app.innerHTML = userline() + `<nav class="tabs">${tabs.map(([id, l]) => `<a href="#t=${id}" class="${id === tab ? 'on' : ''}">${esc(l)}</a>`).join('')}</nav>` + body;
+  if (tab === 'dash') app.onchange = e => { if (e.target.matches('[data-dash]')) go('#t=dash' + (e.target.value ? '&d=' + encodeURIComponent(e.target.value) : '')); };
 }
 async function myTab() {
   const my = await api('/api/my');
   return card(my.form.title, `<p class="sub">Academic year ${C.YEAR_FULL}. ${my.form.period === 'semester' ? 'One form per semester; the annual score is the average of the two verified semesters.' : 'One form for the academic year.'}
     After you submit, it goes to the ${REVIEWER[my.form.kind]} for review.</p>
-    <table style="margin-top:12px"><tr><th>Period</th><th>Status</th><th>Self total</th><th></th></tr>${my.items.map(x => `<tr><td>${esc(TERM[x.term])}</td><td>${badge(x.status)}</td><td>${x.self ?? '–'}</td>
+    <table style="margin-top:12px"><tr><th>Form</th><th>Status</th><th>Self total</th><th></th></tr>${my.items.map(x => `<tr><td>${esc(x.term === 'year' ? `Academic year ${C.YEAR_FULL} appraisal form` : TERM[x.term])}</td><td>${badge(x.status)}</td><td>${x.self ?? '–'}</td>
       <td><button class="alt" data-go="#m=${x.term}">${x.status === 'not started' ? 'Start' : x.status === 'draft' ? 'Continue' : 'View'}</button></td></tr>`).join('')}</table>`);
 }
 const listTable = rows => (rows.length ? `<div class="scroll"><table><tr><th>Code</th><th>Name</th><th>Period</th><th>Status</th><th>Self</th><th>Final</th><th>Change</th><th></th></tr>${rows.map(r => {
@@ -99,16 +101,112 @@ const listTable = rows => (rows.length ? `<div class="scroll"><table><tr><th>Cod
     <td>${open ? r.self ?? '–' : '–'}</td><td>${open ? r.final ?? '–' : '–'}</td><td class="${open ? cls(r.final - r.self) : ''}">${open && r.self != null ? chg(r.final - r.self) : ''}</td>
     <td>${r.canOpen ? `<button class="alt" data-go="#r=${r.id}">Open</button>` : '<span class="mute">Not submitted yet</span>'}</td></tr>`;
 }).join('')}</table></div>` : '<p class="mute">No appraisals here yet.</p>');
+// a list with its Report button (the report covers the same appraisals: one kind, one department or all)
+const listCard = (title, rows, kind, dept = '') => `<div class="card"><div class="sechead"><h3>${esc(title)}</h3>${rows.length
+  ? `<button class="alt" data-go="#rep=${kind}${dept ? '&d=' + encodeURIComponent(dept) : ''}">Report</button>` : ''}</div><div style="margin-top:12px">${listTable(rows)}</div></div>`;
 function listTab(tab, list, dept) {
   const of = k => list.filter(r => r.kind === k);
-  if (tab === 'dept') return card('Staff of ' + ME.dept, listTable(of('staff')));
-  if (tab === 'support') return SUPPORT.map(k => card(C.ROLES[k], listTable(of(k)))).join('');
-  if (tab === 'vpf') return card('Vice Principal', listTable(of('vp')));
-  if (tab === 'prf') return card('Principal', listTable(of('principal')));
+  if (tab === 'dept') return listCard('Staff of ' + ME.dept, of('staff'), 'staff', ME.dept);
+  if (tab === 'support') return SUPPORT.map(k => listCard(C.ROLES[k], of(k), k)).join('');
+  if (tab === 'vpf') return listCard('Vice Principal', of('vp'), 'vp');
+  if (tab === 'prf') return listCard('Principal', of('principal'), 'principal');
   const ds = C.DEPARTMENTS, inDept = d => list.filter(r => r.dept === d && (r.kind === 'staff' || r.kind === 'hod'));
   if (!ds.includes(dept)) dept = ds.find(d => inDept(d).length) || ds[0];
   return `<div class="chips">${ds.map(d => `<a class="chip ${d === dept ? 'on' : ''}" href="#t=depts&d=${encodeURIComponent(d)}">${esc(d)} <span class="mute">${inDept(d).length}</span></a>`).join('')}</div>`
-    + card('HoD – ' + dept, listTable(inDept(dept).filter(r => r.kind === 'hod'))) + card('Staff – ' + dept, listTable(inDept(dept).filter(r => r.kind === 'staff')));
+    + listCard('HoD – ' + dept, inDept(dept).filter(r => r.kind === 'hod'), 'hod', dept) + listCard('Staff – ' + dept, inDept(dept).filter(r => r.kind === 'staff'), 'staff', dept);
+}
+
+/* ---------- report of a list: each appraisal's self, final and change, and its weaker and stronger sections (final marks); printable ---------- */
+async function reportPage(kind, dept) {
+  if (!C.KINDS.includes(kind)) throw new Error('No such report.');
+  const list = (await api('/api/review/list')).filter(r => r.kind === kind && (!dept || r.dept === dept)), form = formOf(kind);
+  const full = await Promise.all(list.map(r => (r.canOpen ? api('/api/review/' + r.id) : null)));
+  const secs = xs => (xs.length ? xs.map(x => `<div><b>${x.code}</b> ${esc(x.title)} <span class="mute">${r1(x.marks)}/${x.max}</span></div>`).join('') : '<span class="mute">–</span>');
+  const done = full.filter(Boolean), avg = f => (done.length ? r1(done.reduce((s, d) => s + f(d.totals), 0) / done.length) : '–');
+  const title = (kind === 'staff' ? 'Staff' : C.ROLES[kind]) + (dept ? ' – ' + dept : '');
+  app.onclick = app.oninput = app.onchange = null;
+  app.innerHTML = userline() + `<div class="bar noprint"><button class="alt" data-go="${esc(LAST)}">← Back</button><b>Report</b><span class="mute">${esc(title)}</span>
+      <span class="sp"><button onclick="location.href = '/api/review/report.pdf?kind=${kind}${dept ? '&d=' + encodeURIComponent(dept) : ''}'">Download PDF</button></span></div>
+    <div class="card report"><h3>Appraisal report – ${esc(title)}</h3>
+      <p class="sub">Academic year ${C.YEAR_FULL} · made ${esc(C.when(new Date().toISOString()))} by ${esc(ME.name)} (${esc(ME.roleName)})</p>
+      <p class="sub">${list.length} listed · ${done.length} submitted · ${list.length - done.length} not submitted yet · average self ${avg(t => t.self)} · average final ${avg(t => t.final)}</p>
+      <p class="mute" style="margin:8px 0 12px">Weaker / stronger section: the section(s) with the lowest / highest share of their maximum marks, using the final marks (after review).</p>
+      <div class="scroll"><table class="rep"><tr><th>Code</th><th>Name</th><th>Status</th><th>Self</th><th>Final</th><th>Change</th><th>Weaker section</th><th>Stronger section</th></tr>
+      ${list.map((r, k) => { const d = full[k], who = `<td>${esc(r.owner)}</td><td>${esc(r.name || '–')}${r.designation ? `<div class="mute">${esc(r.designation)}</div>` : ''}</td><td>${badge(r.status)}</td>`;
+        if (!d) return `<tr>${who}<td colspan="5" class="mute">Not submitted yet</td></tr>`;
+        const t = d.totals, sw = C.strengths(t.rows, form.ind), c = t.final - t.self;
+        return `<tr>${who}<td>${r1(t.self)}</td><td>${r1(t.final)}</td><td class="${cls(c)}">${chg(c)}</td><td>${secs(sw.weak)}</td><td>${secs(sw.strong)}</td></tr>`; }).join('')}</table></div></div>`;
+}
+
+/* ---------- analytics dashboard: a department (a HoD: their own only) or the whole college (Vice Principal, Principal, Secretary) ---------- */
+// Charts drawn here, no chart library: marks in one blue; the grid light -> dark blue; above / below the college average in blue / orange;
+// appraisal stages in their status colours, always with their names and counts beside them.
+const BLUE = '#2a78d6', ORANGE = '#eb6834';
+const HEAT = ['#cde2fb', '#9ec5f4', '#6da7ec', '#3987e5', '#1c5cab'];   // 0-19, 20-39, 40-59, 60-79, 80-100 % of the maximum
+const STAGES = [['not started', 'Not started', '#c7c6c0'], ['draft', 'Being filled', '#fab219'], ['submitted', 'Submitted', BLUE], ['proceeded', 'Proceeded by HoD', '#6250d6'], ['finalised', 'Finalised', '#0ca30c']];
+const pctOf = v => (v == null ? '–' : r1(v) + '%'), clamp = v => Math.max(0, Math.min(100, v || 0));
+const hbar = (label, share, text, tip = '') => `<div class="hrow" title="${esc(tip)}"><span class="hl">${label}</span><span class="hb"><i style="width:${clamp(share)}%"></i></span><span class="hv">${text}</span></div>`;
+const heat = (v, tip) => (v == null ? '<td class="heat na">–</td>' : `<td class="heat" style="background:${HEAT[Math.min(4, Math.floor(v / 20))]};color:${v >= 60 ? '#fff' : '#0b0b0b'}" title="${esc(tip)}: ${r1(v)}% of the maximum">${Math.round(v)}</td>`);
+const kpi = (value, label, share) => `<div class="kpi"><div class="kv">${value ?? '–'}</div><div class="kl">${esc(label)}</div>${share == null ? '' : `<div class="kb"><i style="width:${clamp(share)}%"></i></div>`}</div>`;
+const keyList = xs => `<p class="ckey">${xs.map(([k, t]) => `<span><b>${esc(k)}</b> ${esc(t)}</span>`).join('')}</p>`;
+// a column chart that scales with its box: items [{ label, value, text, tip }] on 0..max, with an optional dashed reference line
+function columns(items, { max = 100, ref = null, refText = '' } = {}) {
+  const W = Math.max(320, items.length * 56), H = 230, T = 28, B = 32, slot = W / items.length, bw = Math.min(60, slot * 0.56), base = H - B, y = v => T + (base - T) * (1 - Math.min(v || 0, max) / max);
+  const grid = [0.25, 0.5, 0.75, 1].map(f => `<line x1="0" x2="${W}" y1="${y(max * f)}" y2="${y(max * f)}" class="cg"/>`).join('');
+  const bars = items.map((it, i) => {
+    const x = slot * i + (slot - bw) / 2, top = y(it.value), r = Math.min(4, base - top, bw / 2);   // rounded at the data end only
+    return `<g><title>${esc(it.tip || it.text)}</title><path d="M${x},${base}V${top + r}Q${x},${top} ${x + r},${top}H${x + bw - r}Q${x + bw},${top} ${x + bw},${top + r}V${base}Z" fill="${BLUE}"/>
+      <text x="${x + bw / 2}" y="${top - 7}" class="cv">${esc(it.text)}</text><text x="${x + bw / 2}" y="${base + 20}" class="cl">${esc(it.label)}</text></g>`;
+  }).join('');
+  const line = ref == null ? '' : `<line x1="0" x2="${W}" y1="${y(ref)}" y2="${y(ref)}" class="cr"/>`;   // its name goes in the key below, clear of the bars
+  return `<svg class="cols" viewBox="0 0 ${W} ${H}" role="img" aria-label="column chart">${grid}<line x1="0" x2="${W}" y1="${base}" y2="${base}" class="cb"/>${bars}${line}</svg>` + (ref == null ? '' : `<p class="ckey"><span><span class="refkey"></span>${esc(refText)}</span></p>`);
+}
+// the stages of a list of appraisals as one bar, with each stage's name and count
+function stages(list) {
+  const parts = STAGES.map(([k, l, c]) => [l, c, list.filter(x => x.status === k).length]).filter(p => p[2]);
+  return `<div class="stack">${parts.map(([l, c, n]) => `<i style="width:${n / list.length * 100}%;background:${c}" title="${l}: ${n}"></i>`).join('')}</div>
+    <div class="legend">${parts.map(([l, c, n]) => `<span><span class="swatch" style="background:${c}"></span>${l} <b>${n}</b></span>`).join('')}</div>`;
+}
+const highlight = (strong, xs) => `<div class="hlc ${strong ? 'strong' : 'weak'}"><div class="hlh">${strong ? '▲ Strongest' : '▼ Weakest'}</div>${xs.length
+  ? xs.map(s => `<div class="hls"><span class="hlp">${Math.round(s.share)}%</span><span><b>${s.code}</b> ${esc(s.title)}<br><span class="mute">${s.avg} of ${s.max} marks on average</span></span></div>`).join('')
+  : '<p class="mute">All sections are level.</p>'}</div>`;
+const domainChart = ds => columns(ds.map(d => ({ label: d.key, value: d.share, text: Math.round(d.share) + '%', tip: `${d.key}. ${d.title}: ${d.avg} of ${d.max} marks (${pctOf(d.share)})` })))
+  + keyList(ds.map(d => [d.key, `${d.title} (${d.avg} / ${d.max})`]));
+async function dashTab(dept) {
+  const D = await api('/api/dashboard' + (dept ? '?d=' + encodeURIComponent(dept) : ''));
+  const head = ME.role === 'hod' ? `<p class="sub dsel">Department dashboard · <b>${esc(D.dept)}</b></p>`
+    : `<label class="dsel">Dashboard for <select data-dash><option value="">Whole college</option>${C.DEPARTMENTS.map(d => `<option ${d === D.dept ? 'selected' : ''}>${esc(d)}</option>`).join('')}</select></label>`;
+  return head + (D.scope === 'dept' ? deptDash(D) : collegeDash(D));
+}
+function deptDash(D) {
+  if (!D.count) return card(D.dept, '<p class="mute">No submitted appraisals in this department yet.</p>');
+  const removed = D.sections.filter(s => s.removed), desigMax = Math.max(...D.designations.map(x => x.count));
+  const days = (D.work.find(w => w.label === 'FDP / STTP days') || {}).value || 0, work = D.work.filter(w => w.label !== 'FDP / STTP days').sort((a, b) => b.value - a.value), workMax = Math.max(1, ...work.map(w => w.value));
+  return `<div class="kpis dk">${kpi(D.count, `submitted appraisal${D.count > 1 ? 's' : ''} in ${D.dept}`)}${kpi(D.self, 'average self score (out of 100)', D.self)}${kpi(D.final, 'average final score after review', D.final)}</div>
+    <div class="dgrid">${card('Domain-wise average (% of the maximum)', domainChart(D.domains))}
+      ${card('Strongest and weakest sections', highlight(true, D.strongest) + highlight(false, D.weakest))}</div>
+    ${card('Section-wise average (% of the maximum)', columns(D.sections.map(s => ({ label: s.code, value: s.share, text: Math.round(s.share) + '%', tip: `${s.code} ${s.title}: ${s.avg} of ${s.max} marks (${pctOf(s.share)})` })))
+      + keyList(D.sections.map(s => [s.code, s.title])))}
+    <div class="dgrid">${card('Sections removed (nothing to claim)', removed.length ? removed.map(s => hbar(`<b>${s.code}</b> ${esc(s.title)}`, s.removed / D.count * 100, `${s.removed} of ${D.count} staff`, s.title)).join('')
+        : '<p class="mute">No staff member removed a section: every section was claimed.</p>')}
+      ${card('Designation-wise', D.designations.map(x => hbar(esc(x.name), x.count / desigMax * 100, `${x.count} staff · avg ${x.final}`, `${x.name}: ${x.count} staff, average self ${x.self}, average final ${x.final}`)).join(''))}</div>
+    <div class="dgrid">${card('University results (A1)', D.results.passPct == null ? '<p class="mute">No university results given yet.</p>'
+        : `<div class="big">${D.results.passPct}%</div><div class="kb big"><i style="width:${clamp(D.results.passPct)}%"></i></div><p class="mute">average pass % of the subjects handled, from ${D.results.staff} staff member${D.results.staff > 1 ? 's' : ''}</p>`)}
+      ${card('Work done (entries in the appraisals)', work.map(w => hbar(esc(w.label), w.value / workMax * 100, w.label === 'FDP / STTP attended' ? `${w.value} · ${days} days` : String(w.value))).join(''))}</div>`;
+}
+function collegeDash(D) {
+  if (!D.count) return card('Whole college', '<p class="mute">No submitted appraisals yet.</p>');
+  const sign = n => (n == null ? '–' : n > 0 ? '+' + n : String(n)), big = Math.max(1, ...D.ranking.map(d => Math.abs(d.vsCollege || 0)));
+  const vs = d => `<div class="hrow" title="${esc(d.dept)}: ${sign(d.vsCollege)} against the college average"><span class="hl">${esc(d.dept)}</span><span class="dv"><span class="neg"><i style="width:${d.vsCollege < 0 ? -d.vsCollege / big * 100 : 0}%"></i></span><span class="pos"><i style="width:${d.vsCollege > 0 ? d.vsCollege / big * 100 : 0}%"></i></span></span><span class="hv">${sign(d.vsCollege)} ${d.vsCollege > 0 ? 'above' : d.vsCollege < 0 ? 'below' : ''}</span></div>`;
+  return `<div class="kpis dk">${kpi(D.count, 'submitted staff appraisals')}${kpi(D.self, 'average self score (out of 100)', D.self)}${kpi(D.final, 'average final score after review', D.final)}${kpi(`${D.ranking.length} / ${C.DEPARTMENTS.length}`, 'departments with submissions', D.ranking.length / C.DEPARTMENTS.length * 100)}</div>
+    <div class="dgrid">${card('Department ranking (average final score)', columns(D.ranking.map(d => ({ label: d.dept, value: d.final, text: String(d.final), tip: `#${d.rank} ${d.dept}: average final ${d.final}, self ${d.self}, ${d.count} staff` })), { ref: D.final, refText: `college average ${D.final}` }))}
+      ${card(`Compared with the college average (${D.final})`, `<p class="mute" style="margin:0 0 8px">Blue = above the average, orange = below.</p>` + D.ranking.map(vs).join(''))}</div>
+    ${card('Top 10 staff (final score out of 100)', D.top.map(x => hbar(`${x.rank}. ${esc(x.name)} <span class="mute">${esc(x.dept)}</span>`, x.final, String(x.final), `${x.name} (${x.code}), ${x.designation}, ${x.dept}: self ${x.self}, final ${x.final}`)).join(''))}
+    ${card('Department × section (% of the maximum)', `<div class="scroll"><table class="heatt"><tr><th>Department</th>${D.sections.map(s => `<th title="${esc(s.title)}">${s.code}</th>`).join('')}</tr>
+      ${D.depts.filter(d => d.count).map(d => `<tr><td>${esc(d.dept)} <span class="mute">(${d.count})</span></td>${d.sections.map((v, i) => heat(v, `${d.dept} ${D.sections[i].code} ${D.sections[i].title}`)).join('')}</tr>`).join('')}</table></div>
+      <p class="mute" style="margin-top:8px">Lighter = weaker, darker = stronger: ${['0–19', '20–39', '40–59', '60–79', '80–100'].map((l, i) => `<span class="swatch" style="background:${HEAT[i]}"></span>${l}%`).join(' ')}</p>`)}
+    ${card('Domain-wise average for the college (% of the maximum)', domainChart(D.domains))}
+    ${card('HoD, Vice Principal, Principal and officer appraisals', stages(D.leaders) + `<div class="scroll" style="margin-top:12px"><table><tr><th>Role</th><th>Name</th><th>Department</th><th>Status</th><th>Self</th><th>Final</th></tr>${D.leaders.map(x => `<tr><td>${esc(x.role)}</td><td>${esc(x.name)} <span class="mute">${esc(x.username)}</span></td><td>${esc(x.dept || '–')}</td><td>${badge(x.status)}</td><td>${x.self ?? '–'}</td><td>${x.final ?? '–'}</td></tr>`).join('')}</table></div>`)}`;
 }
 
 /* ---------- review of an appraisal ---------- */
@@ -244,7 +342,7 @@ async function openMine(term) {
 function openPreview(kind) { M = { kind, term: '', form: FM[kind] }; MD = {}; MLOCK = false; showMine(); }
 function showMine() {
   for (const k of ['p1', 'ind', 'tables', 'self']) MD[k] = MD[k] || {};
-  const f = M.form, period = PREVIEW ? (f.period === 'semester' ? 'One form per semester' : 'One form per year') : TERM[M.term];
+  const f = M.form, period = PREVIEW || M.term === 'year' ? 'Academic year appraisal form' : TERM[M.term];
   app.innerHTML = (PREVIEW ? '' : userline()) + `<div class="bar"><button class="alt" data-go="${PREVIEW ? '#' : '#t=my'}">← ${PREVIEW ? 'All forms' : 'Home'}</button><b>${esc(f.title)}</b><span class="mute">${esc(period)} · ${C.YEAR_FULL}</span>
       <div class="sp"><span id="tot"></span><span class="mute" id="saved">${PREVIEW ? 'Preview – not saved' : MLOCK ? 'Submitted' : 'All changes saved'}</span>${MLOCK ? '' : PREVIEW ? '<button data-submit>Check form</button>' : '<button class="alt" data-save>Save</button><button data-submit>Submit</button>'}</div></div>
     ${PREVIEW ? '<div class="note"><b>Preview for validation.</b> Type figures and choose files to see how the marks are calculated. Nothing you type or choose is saved or sent; it is cleared when you leave this form.</div>' : ''}
@@ -407,6 +505,7 @@ async function route() {
     const p = new URLSearchParams(location.hash.slice(1));
     if (ME.mustChange || p.has('pw')) passwordPage(ME.mustChange);
     else if (p.has('r')) await openReview(Number(p.get('r')));
+    else if (p.has('rep')) await reportPage(p.get('rep'), p.get('d') || '');
     else if (p.has('m') && FM[ME.role]) await openMine(p.get('m'));
     else await home(p.get('t'), p.get('d'));
   } catch (e) {

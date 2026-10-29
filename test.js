@@ -79,6 +79,13 @@ assert.ok(!JSON.stringify(C.IND).includes('claimed only in'));                  
   assert.equal(v.changes[0].remark, 'one course only');                                                                     // B1 0 -> 0 is not a change
   assert.deepEqual(v.levels, [{ level: 'hod', before: 0, after: 22, change: 22, sections: ['A1', 'C1', 'E4'] }, { level: 'principal', before: 22, after: 26, change: 4, sections: ['A1', 'C2'] }, { level: 'secretary', before: 26, after: 27, change: 1, sections: ['A1'] }]);
   assert.deepEqual(v.overall, { before: 0, after: 27, change: 27 }); assert.deepEqual(C.deviation({}).changes, []); }
+// ---- the report's stronger / weaker sections: highest / lowest share of the section maximum in the final marks; all ties; none when all are equal
+{ const half = Object.fromEntries(C.IND.map(i => [i.code, { final: i.max / 2 }])), sw = rows => { const s = C.strengths(rows); return [s.strong.map(x => x.code), s.weak.map(x => x.code)]; };
+  assert.deepEqual(sw({ ...half, A1: { final: 20 }, D1: { final: 0 } }), [['A1'], ['D1']]);                          // 20/20 strongest, 0/10 weakest
+  assert.deepEqual(sw({ ...half, C1: { final: 5 }, E3: { final: 3 }, B1: { final: 0 }, E2: { final: 0 } }), [['C1', 'E3'], ['B1', 'E2']]);   // ties all listed
+  assert.deepEqual(sw({ ...half, A1: { final: 18 } }), [['A1'], C.IND.filter(i => i.code !== 'A1').map(i => i.code)]);   // the share counts, not the marks
+  assert.deepEqual(sw(half), [[], []]);                                                                              // all equal: neither
+  const top = C.strengths({ ...half, A1: { final: 20 } }).strong[0]; assert.deepEqual([top.code, top.title, top.marks, top.max], ['A1', I('A1').title, 20, 20]); }
 
 // ---- who may see or edit which appraisal (the permission table of the architecture)
 { const A = require('./auth.js'), u = (role, dept) => ({ role, dept, username: role }), ap = (kind, status, dept = 'CSE') => ({ kind, status, dept });
@@ -190,6 +197,8 @@ const snap = () => { const out = {}; const walk = d => { for (const e of fs.read
     const Auth = require('./auth.js');
     // the logins made on the first start: one per HoD and role, each with a one-time password still to be changed
     assert.deepEqual((await store.listAccounts()).filter(a => a.must_change).map(a => a.username).sort(), Auth.DEFAULT_LOGINS.map(a => a.username).sort());
+    assert.deepEqual((await store.listAccounts()).filter(a => a.role === 'pc').map(a => [a.username, a.name]).sort(), [['pc', 'Placement Co-ordinator'], ['pc2', 'Placement Co-ordinator 2'], ['pc3', 'Placement Co-ordinator 3']]);   // three Placement Co-ordinators
+    assert.ok(await Auth.check('pc3@nscet', (await store.findAccount('pc3')).password_hash));
     assert.match(acct(['add', 'hod', 'cse', 'hodcse', 'Dr. HoD CSE'], 'Secret@123\n'), /already exists/);
     const login = (username, password) => j('/api/login', { method: 'POST', json: { username, password } });
     const first = await login('principal', 'principal@nscet'); assert.equal(first.status, 200); assert.equal((await first.json()).mustChange, true);
@@ -243,6 +252,12 @@ const snap = () => { const out = {}; const walk = d => { for (const e of fs.read
     rv = await (await hod('/api/review/' + t1.id, { method: 'PUT', json: { marks: { A1: { marks: '12', remark: 'pass % proof covers one course only' }, E4: { marks: '5', remark: 'invited talk proof added' } }, overall: 'Good year', notes: { 'check:1': { answer: 'Yes', text: 'all proofs seen' } } } })).json();
     assert.deepEqual(rv.deviation.changes.map(c => [c.level, c.code, c.before, c.after, c.change, c.remark]), [['hod', 'A1', 15, 12, -3, 'pass % proof covers one course only'], ['hod', 'E4', 2, 5, 3, 'invited talk proof added']]);
     assert.deepEqual(rv.deviation.levels, [{ level: 'hod', before: self, after: self, change: 0, sections: ['A1', 'E4'] }]); assert.equal(rv.levels.hod.overall.remark, 'Good year'); assert.equal(rv.notes['check:1'].answer, 'Yes');
+    // the report of a list as a PDF: the HoD's department only; not for lists the login cannot see
+    const rep = await hod('/api/review/report.pdf?kind=staff'); assert.equal(rep.status, 200); assert.match(rep.headers.get('content-type'), /pdf/); assert.match(rep.headers.get('content-disposition'), /Appraisal-Report-Staff-CSE-2025-26\.pdf/);
+    const repDoc = await require('pdf-lib').PDFDocument.load(Buffer.from(await rep.arrayBuffer())); assert.equal(repDoc.getTitle(), 'Appraisal Report – Staff – CSE'); assert.ok(repDoc.getPageCount() >= 1);
+    assert.equal(Math.round(repDoc.getPage(0).getWidth()), 842);                                                                      // A4 landscape
+    for (const q of ['kind=hod', 'kind=vp', 'kind=nope']) assert.equal((await hod('/api/review/report.pdf?' + q)).status, 403);
+    assert.equal((await j('/api/review/report.pdf?kind=staff')).status, 401);
     assert.equal((await pr('/api/review/' + t1.id, { method: 'PUT', json: { marks: { A1: { marks: '10' } } } })).status, 403);         // the Principal waits for the HoD's Proceed
     assert.equal((await (await vpc('/api/review/' + t1.id)).json()).can.edit, false);
     assert.equal((await (await hod('/api/review/' + t1.id + '/proceed', { method: 'POST' })).json()).status, 'proceeded');
@@ -271,7 +286,7 @@ const snap = () => { const out = {}; const walk = d => { for (const e of fs.read
     assert.deepEqual([lt('T2').status, lt('T2').designation, lt('N2').status, lt('T1').status], ['submitted', 'Professor', 'draft', 'draft']);
     staffForm('Dr. Test Staff (T1)', { ...whole, ...at }, ['proof A1.pdf']); assert.equal((await (await hod('/api/review/list')).json()).find(x => x.id === t1.id).status, 'submitted');
     assert.equal((await (await hod('/api/review/' + t1.id)).json()).levels.hod.ind.A1.marks, 12);                                  // submitted again: the review marks were kept
-    // ---- own appraisals: the Principal's (once a year) is reviewed by the Secretary only; the Librarian's has two semesters
+    // ---- own appraisals: every form is one per academic year; the Principal's is reviewed by the Secretary only
     const { FORMS } = require('./public/forms.js'), fill = async (call, base, form) => {
       await call(base + '/open', { method: 'POST' }); const body = { p1: {}, ind: {}, tables: {}, self: {}, declared: true };
       for (const f of form.p1) body.p1[f.k] = f.type === 'date' ? '01-06-2020' : f.type === 'period' ? '01-06-2025 to 31-05-2026' : f.type === 'select' ? f.options[0] : 'x';
@@ -289,13 +304,18 @@ const snap = () => { const out = {}; const walk = d => { for (const e of fs.read
     assert.ok(prRow && prRow.canOpen); assert.ok(!(await (await vpc('/api/review/list')).json()).some(x => x.kind === 'principal')); assert.equal((await pr('/api/review/' + prRow.id)).status, 404);   // not the VP, not the Principal
     assert.equal(prRow.self, C.totals(prBody, FORMS.principal.ind).self);                                                          // the list total uses the Principal's own form
     assert.equal((await pr('/api/my/year', { method: 'PUT', json: prBody })).status, 409);                                           // submitted: locked
+    // the extra Placement Co-ordinators: their own login (one-time password <username>@nscet) and their own Placement Co-ordinator form
+    const pc2 = await as('Pc2', 'pc2@nscet'), pc2My = await (await pc2('/api/my')).json();
+    assert.deepEqual([pc2My.user.username, pc2My.form.kind, pc2My.form.title, pc2My.items.map(x => x.term).join()], ['pc2', 'pc', FORMS.pc.title, 'year']);
+    await pc2('/api/my/year/open', { method: 'POST' }); assert.equal((await (await pc2('/api/my/year')).json()).kind, 'pc');
+    assert.equal((await store.find('pc', 'pc2', C.YEAR)).owner, 'pc2'); assert.equal(await store.find('pc', 'pc3', C.YEAR), null);   // each PC has an appraisal of their own
     const lib = await as('lib1', 'Lib@12345'), mineLib = await (await lib('/api/my')).json();
-    assert.deepEqual(mineLib.items.map(x => x.term + ':' + x.status), ['S1:not started', 'S2:not started']);
-    await lib('/api/my/S1/open', { method: 'POST' }); const s1 = await lib('/api/my/S1/submit', { method: 'POST' }); assert.equal(s1.status, 409); assert.ok((await s1.json()).missing.some(m => /Highest Qualification/.test(m)));
+    assert.deepEqual(mineLib.items.map(x => x.term + ':' + x.status), ['year:not started']); assert.equal((await lib('/api/my/S1/open', { method: 'POST' })).status, 404);   // no semesters
+    await lib('/api/my/year/open', { method: 'POST' }); const s1 = await lib('/api/my/year/submit', { method: 'POST' }); assert.equal(s1.status, 409); assert.ok((await s1.json()).missing.some(m => /Highest Qualification/.test(m)));
     const lock = new FormData(); lock.append('file', new Blob([fs.readFileSync(path.join(__dirname, 'test-fixtures', 'protected.pdf'))], { type: 'application/pdf' }), 'protected.pdf');
-    const lr = await lib('/api/my/S1/upload', { method: 'POST', body: lock }); assert.equal(lr.status, 400); assert.match((await lr.json()).error, /password-protected/);   // protected PDFs refused
-    const libBody = await fill(lib, '/api/my/S1', FORMS.librarian); assert.equal((await lib('/api/my/S1', { method: 'PUT', json: libBody })).status, 200); assert.equal((await lib('/api/my/S1/submit', { method: 'POST' })).status, 200);
-    const libRow = (await (await vpc('/api/review/list')).json()).find(x => x.kind === 'librarian' && x.term === 'S1');
+    const lr = await lib('/api/my/year/upload', { method: 'POST', body: lock }); assert.equal(lr.status, 400); assert.match((await lr.json()).error, /password-protected/);   // protected PDFs refused
+    const libBody = await fill(lib, '/api/my/year', FORMS.librarian); assert.equal((await lib('/api/my/year', { method: 'PUT', json: libBody })).status, 200); assert.equal((await lib('/api/my/year/submit', { method: 'POST' })).status, 200);
+    const libRow = (await (await vpc('/api/review/list')).json()).find(x => x.kind === 'librarian' && x.term === '');
     rv = await (await vpc('/api/review/' + libRow.id, { method: 'PUT', json: { marks: { A2: { marks: '4', remark: 'access proof partial' } }, notes: { 'approval:strengths': { text: 'Good automation work' }, 'control:1': { text: 'checked' } } } })).json();
     assert.deepEqual([rv.can.finalise, rv.notes['approval:strengths'].text, rv.deviation.changes[0].change], [true, 'Good automation work', -4]);
     assert.equal((await (await lib('/api/my')).json()).items[0].status, 'submitted'); assert.equal((await lib('/api/review/list')).status, 403);   // the Librarian does not review
@@ -303,6 +323,19 @@ const snap = () => { const out = {}; const walk = d => { for (const e of fs.read
     assert.deepEqual((await (await hod('/api/my')).json()).items.map(x => x.term + ':' + x.status), ['year:not started']); assert.equal((await hod('/api/my/S1/open', { method: 'POST' })).status, 404);
     await hod('/api/my/year/open', { method: 'POST' }); const hs = await hod('/api/my/year/submit', { method: 'POST' }); assert.equal(hs.status, 200);
     const hodRow = (await (await pr('/api/review/list')).json()).find(x => x.kind === 'hod' && x.owner === 'hodcse2'); assert.ok(hodRow && hodRow.status === 'submitted' && hodRow.self === 0 && hodRow.term === '');
-    console.log('OK – scoring rules, logins, staff appraisals read from the staff folder (untouched), review chain, own appraisals');
+    // ---- the dashboards: a HoD gets their own department only, whatever is asked; the VP, Principal and Secretary any department or the college
+    const dh = await (await hod('/api/dashboard?d=IT')).json();
+    assert.deepEqual([dh.scope, dh.dept, dh.count], ['dept', 'CSE', 1]);                                                             // T1 only: N2 is still a draft
+    assert.equal(dh.sections.find(s => s.code === 'A1').avg, 13); assert.equal(dh.domains.length, 5);                               // final marks (the Secretary's 13)
+    assert.equal(dh.results.passPct, 88); assert.deepEqual(dh.designations.map(x => [x.name, x.count]), [['Assistant Professor', 1]]);   // 'AP' grouped
+    assert.equal(dh.work.find(w => w.label === 'FDP / STTP attended').value, 1); assert.ok(dh.strongest.length && dh.weakest.length);
+    const dc = await (await vpc('/api/dashboard')).json();
+    assert.deepEqual([dc.scope, dc.count, dc.ranking.map(d => d.dept).sort().join()], ['college', 3, 'AI&DS,CSE,IT']);
+    assert.equal(dc.ranking[0].vsCollege, Math.round((dc.ranking[0].final - dc.final) * 10) / 10); assert.equal(dc.depts.find(d => d.dept === 'CSE').sections.length, C.IND.length);
+    assert.ok(dc.leaders.some(l => l.username === 'hodcse2' && l.status === 'submitted' && l.self === 0) && !dc.leaders.some(l => l.role === 'Principal'));   // not the Principal's for the VP
+    assert.ok((await (await sec('/api/dashboard')).json()).leaders.some(l => l.role === 'Principal' && l.status === 'submitted'));
+    assert.equal((await (await pr('/api/dashboard?d=CSE')).json()).count, 1);
+    assert.equal((await lib('/api/dashboard')).status, 403); assert.equal((await j('/api/dashboard')).status, 401);
+    console.log('OK – scoring rules, logins, staff appraisals read from the staff folder (untouched), review chain, own appraisals, report PDF, dashboards');
   } finally { srv.kill(); fs.rmSync(tmp, { recursive: true, force: true }); fs.rmSync(staffDir, { recursive: true, force: true }); await dropDb().catch(e => console.error('could not drop the test database:', e.message)); }
 })().catch(e => { console.error(e); process.exit(1); });

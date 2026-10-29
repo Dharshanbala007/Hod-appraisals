@@ -346,6 +346,14 @@
     return { changes, levels, overall: { before: t.self, after: t.final, change: t.final - t.self } };
   }
 
+  // The stronger and weaker sections of an appraisal: the highest / lowest share of the section's maximum in the final marks
+  // (rows = totals().rows; every tie is listed). When all sections have the same share there is neither.
+  function strengths(rows, inds = IND) {
+    const s = inds.map(i => ({ code: i.code, title: i.title, max: i.max, marks: rows[i.code].final, share: rows[i.code].final / i.max }));
+    const hi = Math.max(...s.map(x => x.share)), lo = Math.min(...s.map(x => x.share));
+    return hi === lo ? { strong: [], weak: [] } : { strong: s.filter(x => x.share === hi), weak: s.filter(x => x.share === lo) };
+  }
+
   // Ordered proof list: only rows with a file get a number (A1-01, A1-02 ... no gaps), in filing order A1..E4.
   function proofs(data, inds = IND) {
     const list = [];
@@ -357,6 +365,6 @@
     return list;
   }
 
-  const api = { DEPARTMENTS, deptOf, maxMB, MAX_MB_ANY, YEAR, YEAR_LABEL, YEAR_FULL, IND, DOMAINS, CHECKS, LEVELS, ROLES, KINDS, pad, score, totals, deviation, proofs, problems, problemsFor, when, entryLines, hasProof, rowsOf, rowText, rowDate, normPeriod, isPeriod, parseDate, complete, started, groupOf, val };
+  const api = { DEPARTMENTS, deptOf, maxMB, MAX_MB_ANY, YEAR, YEAR_LABEL, YEAR_FULL, IND, DOMAINS, CHECKS, LEVELS, ROLES, KINDS, pad, score, totals, deviation, strengths, proofs, problems, problemsFor, when, entryLines, hasProof, rowsOf, rowText, rowDate, normPeriod, isPeriod, parseDate, complete, started, groupOf, val };
   if (typeof module !== 'undefined') module.exports = api; else root.CFG = api;
 })(typeof window !== 'undefined' ? window : globalThis);

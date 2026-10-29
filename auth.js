@@ -64,15 +64,18 @@ const forgive = u => tries.delete(String(u).toLowerCase());
 // The logins made on the first start, each with a one-time password that must be changed at the first login:
 //   hodcse, hodaids, hodit, hodeee, hodece, hodmech, hodcivil, hodsh  (one-time password hod@nscet)
 //   vp, principal, secretary, po, pc, librarian, pd                   (one-time password <username>@nscet, e.g. principal@nscet)
-// A login is made only while that role (for a HoD: that department's HoD) has none, so a login the administrator replaced is not made again.
+//   pc2, pc3: the college's two more Placement Co-ordinators, the same form as pc    (pc2@nscet, pc3@nscet)
+// A login is made only while that role (for a HoD: that department's HoD) has none, so a login the administrator replaced is not made again;
+// the extra Placement Co-ordinators while their username is free.
 const DEFAULT_LOGINS = [
   ...C.DEPARTMENTS.map(d => ({ username: 'hod' + d.toLowerCase().replace(/[^a-z0-9]/g, ''), name: 'HoD ' + d, role: 'hod', dept: d, otp: 'hod@nscet' })),
   ...['vp', 'principal', 'secretary', 'po', 'pc', 'librarian', 'pd'].map(r => ({ username: r, name: C.ROLES[r], role: r, dept: null, otp: r + '@nscet' })),
+  ...['pc2', 'pc3'].map((u, i) => ({ username: u, name: `${C.ROLES.pc} ${i + 2}`, role: 'pc', dept: null, otp: u + '@nscet', extra: true })),
 ];
 async function seedLogins(store) {
   const made = [];
   for (const a of DEFAULT_LOGINS) {
-    if ((await store.hasRole(a.role, a.dept)) || (await store.findAccount(a.username))) continue;
+    if ((await store.findAccount(a.username)) || (!a.extra && (await store.hasRole(a.role, a.dept)))) continue;
     await store.addAccount({ ...a, passwordHash: await hash(a.otp) }); made.push(a.username);
   }
   if (made.length) await store.audit('system', 'accounts added', null, made.join(', ') + ' (one-time passwords)');
