@@ -129,36 +129,41 @@ function listTab(tab, list, dept) {
 }
 
 /* ---------- report of a list: each appraisal's self, final and change, and its weaker and stronger sections (final marks); printable ---------- */
-async function reportPage(kind, dept) {
+async function reportPage(kind, dept, sort) {
   if (!C.KINDS.includes(kind)) throw new Error('No such report.');
+  if (!C.REPORT_SORTS[sort]) sort = 'list';
   const list = (await api('/api/review/list')).filter(r => r.kind === kind && (!dept || r.dept === dept)), form = formOf(kind);
   const full = await Promise.all(list.map(r => (r.canOpen && r.status !== 'draft' ? api('/api/review/' + r.id) : null)));   // drafts: not submitted yet
+  const rows = C.sortReport(list.map((r, k) => ({ r, d: full[k], name: r.name || '', self: full[k] ? full[k].totals.self : null, final: full[k] ? full[k].totals.final : null })), sort);
   const secs = xs => (xs.length ? xs.map(x => `<div><b>${x.code}</b> ${esc(x.title)} <span class="mute">${r1(x.marks)}/${x.max}</span></div>`).join('') : '<span class="mute">–</span>');
-  const done = full.filter(Boolean), avg = f => (done.length ? r1(done.reduce((s, d) => s + f(d.totals), 0) / done.length) : '–');
-  const title = (kind === 'staff' ? 'Staff' : C.ROLES[kind]) + (dept ? ' – ' + dept : '');
-  app.onclick = app.oninput = app.onchange = null;
+  const done = rows.filter(x => x.d), avg = k => (done.length ? r1(done.reduce((s, x) => s + x[k], 0) / done.length) : '–');
+  const title = (kind === 'staff' ? 'Staff' : C.ROLES[kind]) + (dept ? ' – ' + dept : ''), q = `kind=${kind}${dept ? '&d=' + encodeURIComponent(dept) : ''}`;
+  const status = st => { const w = C.reportStatus(kind, st, STATUS); return w === 'Approved' ? '<span class="badge st-finalised">Approved</span>' : badge(st); };
+  app.onclick = app.oninput = null;
+  app.onchange = e => { if (e.target.matches('[data-rsort]')) go(`#rep=${kind}${dept ? '&d=' + encodeURIComponent(dept) : ''}&s=${e.target.value}`); };
   app.innerHTML = userline() + `<div class="bar noprint"><button class="alt" data-go="${esc(LAST)}">← Back</button><b>Report</b><span class="mute">${esc(title)}</span>
-      <span class="sp"><button onclick="location.href = '/api/review/report.pdf?kind=${kind}${dept ? '&d=' + encodeURIComponent(dept) : ''}'">Download PDF</button></span></div>
+      <span class="sp"><label class="dsel" style="margin:0">Sort by <select data-rsort>${Object.entries(C.REPORT_SORTS).map(([k, l]) => `<option value="${k}" ${k === sort ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select></label>
+      <button onclick="location.href = '/api/review/report.pdf?${q}&sort=${sort}'">Download PDF</button></span></div>
     <div class="card report"><h3>Appraisal report – ${esc(title)}</h3>
-      <p class="sub">Academic year ${C.YEAR_FULL} · made ${esc(C.when(new Date().toISOString()))} by ${esc(ME.name)} (${esc(ME.roleName)})</p>
-      <p class="sub">${list.length} listed · ${done.length} submitted · ${list.length - done.length} not submitted yet · average self ${avg(t => t.self)} · average final ${avg(t => t.final)}</p>
+      <p class="sub">Academic year ${C.YEAR_FULL} · made ${esc(C.when(new Date().toISOString()))} by ${esc(ME.name)} (${esc(ME.roleName)})${sort !== 'list' ? ' · sorted by ' + esc(C.REPORT_SORTS[sort].toLowerCase()) : ''}</p>
+      <div class="kpis" style="margin:12px 0">${kpi(list.length, 'Total Faculty Members')}${kpi(done.length, 'Submitted Faculty records')}${kpi(avg('self'), 'Average Self Assessment Score', done.length ? avg('self') : null)}${kpi(avg('final'), 'Average Final Assessment Score', done.length ? avg('final') : null)}</div>
       <p class="mute" style="margin:8px 0 12px">Weaker / stronger section: the section(s) with the lowest / highest share of their maximum marks, using the final marks (after review).</p>
       <div class="scroll"><table class="rep"><tr><th>Code</th><th>Name</th><th>Status</th><th>Self</th><th>Final</th><th>Change</th><th>Weaker section</th><th>Stronger section</th></tr>
-      ${list.map((r, k) => { const d = full[k], who = `<td>${esc(r.owner)}</td><td>${esc(r.name || '–')}${r.designation ? `<div class="mute">${esc(r.designation)}</div>` : ''}</td><td>${badge(r.status)}</td>`;
+      ${rows.map(({ r, d }) => { const who = `<td>${esc(r.owner)}</td><td>${esc(r.name || '–')}${r.designation ? `<div class="mute">${esc(r.designation)}</div>` : ''}</td><td>${status(r.status)}</td>`;
         if (!d) return `<tr>${who}<td colspan="5" class="mute">Not submitted yet</td></tr>`;
         const t = d.totals, sw = C.strengths(t.rows, form.ind), c = t.final - t.self;
         return `<tr>${who}<td>${r1(t.self)}</td><td>${r1(t.final)}</td><td class="${cls(c)}">${chg(c)}</td><td>${secs(sw.weak)}</td><td>${secs(sw.strong)}</td></tr>`; }).join('')}</table></div></div>`;
 }
 
 /* ---------- analytics dashboard: a department (a HoD: their own only) or the whole college (Vice Principal, Principal, Secretary) ---------- */
-// Charts drawn here, no chart library: marks in one blue; the grid light -> dark blue; above / below the college average in blue / orange;
+// Charts drawn here, no chart library: marks in one blue; the grid in one colour per band (C.HEAT: red very weak ... green strong) with the
+// numbers in it; above / below the college average in blue / orange;
 // appraisal stages in their status colours, always with their names and counts beside them.
 const BLUE = '#2a78d6', ORANGE = '#eb6834';
-const HEAT = ['#cde2fb', '#9ec5f4', '#6da7ec', '#3987e5', '#1c5cab'];   // 0-19, 20-39, 40-59, 60-79, 80-100 % of the maximum
 const STAGES = [['not started', 'Not started', '#c7c6c0'], ['draft', 'Being filled', '#fab219'], ['submitted', 'Submitted', BLUE], ['proceeded', 'Proceeded by HoD', '#6250d6'], ['finalised', 'Finalised', '#0ca30c']];
 const pctOf = v => (v == null ? '–' : r1(v) + '%'), clamp = v => Math.max(0, Math.min(100, v || 0));
 const hbar = (label, share, text, tip = '') => `<div class="hrow" title="${esc(tip)}"><span class="hl">${label}</span><span class="hb"><i style="width:${clamp(share)}%"></i></span><span class="hv">${text}</span></div>`;
-const heat = (v, tip) => (v == null ? '<td class="heat na">–</td>' : `<td class="heat" style="background:${HEAT[Math.min(4, Math.floor(v / 20))]};color:${v >= 60 ? '#fff' : '#0b0b0b'}" title="${esc(tip)}: ${r1(v)}% of the maximum">${Math.round(v)}</td>`);
+const heat = (v, tip) => { if (v == null) return '<td class="heat na">–</td>'; const b = C.heatOf(v); return `<td class="heat" style="background:${b.color};color:${b.ink}" title="${esc(tip)}: ${r1(v)}% of the maximum (${b.label.toLowerCase()})">${Math.round(v)}</td>`; };
 const kpi = (value, label, share) => `<div class="kpi"><div class="kv">${value ?? '–'}</div><div class="kl">${esc(label)}</div>${share == null ? '' : `<div class="kb"><i style="width:${clamp(share)}%"></i></div>`}</div>`;
 const keyList = xs => `<p class="ckey">${xs.map(([k, t]) => `<span><b>${esc(k)}</b> ${esc(t)}</span>`).join('')}</p>`;
 // a column chart that scales with its box: items [{ label, value, text, tip }] on 0..max, with an optional dashed reference line
@@ -188,7 +193,8 @@ async function dashTab(dept) {
   const D = await api('/api/dashboard' + (dept ? '?d=' + encodeURIComponent(dept) : ''));
   const head = ME.role === 'hod' ? `<p class="sub dsel">Department dashboard · <b>${esc(D.dept)}</b></p>`
     : `<label class="dsel">Dashboard for <select data-dash><option value="">Whole college</option>${C.DEPARTMENTS.map(d => `<option ${d === D.dept ? 'selected' : ''}>${esc(d)}</option>`).join('')}</select></label>`;
-  return head + (D.scope === 'dept' ? deptDash(D) : collegeDash(D));
+  const pdf = `<button class="alt" onclick="location.href = '/api/dashboard.pdf${D.scope === 'dept' && ME.role !== 'hod' ? '?d=' + encodeURIComponent(D.dept) : ''}'">Download PDF</button>`;
+  return `<div class="dhead">${head}${pdf}</div>` + (D.scope === 'dept' ? deptDash(D) : collegeDash(D));
 }
 function deptDash(D) {
   if (!D.count) return card(D.dept, '<p class="mute">No submitted appraisals in this department yet.</p>');
@@ -216,7 +222,7 @@ function collegeDash(D) {
     ${card('Top 10 staff (final score out of 100)', D.top.map(x => hbar(`${x.rank}. ${esc(x.name)} <span class="mute">${esc(x.dept)}</span>`, x.final, String(x.final), `${x.name} (${x.code}), ${x.designation}, ${x.dept}: self ${x.self}, final ${x.final}`)).join(''))}
     ${card('Department × section (% of the maximum)', `<div class="scroll"><table class="heatt"><tr><th>Department</th>${D.sections.map(s => `<th title="${esc(s.title)}">${s.code}</th>`).join('')}</tr>
       ${D.depts.filter(d => d.count).map(d => `<tr><td>${esc(d.dept)} <span class="mute">(${d.count})</span></td>${d.sections.map((v, i) => heat(v, `${d.dept} ${D.sections[i].code} ${D.sections[i].title}`)).join('')}</tr>`).join('')}</table></div>
-      <p class="mute" style="margin-top:8px">Lighter = weaker, darker = stronger: ${['0–19', '20–39', '40–59', '60–79', '80–100'].map((l, i) => `<span class="swatch" style="background:${HEAT[i]}"></span>${l}%`).join(' ')}</p>`)}
+      <p class="legend" style="margin-top:10px">${['0–19', '20–39', '40–59', '60–79', '80–100'].map((l, i) => `<span><span class="swatch" style="background:${C.HEAT[i].color}"></span>${l}% <b>${C.HEAT[i].label}</b></span>`).join('')}</p>` + keyList(D.sections.map(s => [s.code, s.title])))}
     ${card('Domain-wise average for the college (% of the maximum)', domainChart(D.domains))}
     ${card('HoD, Vice Principal, Principal and officer appraisals', stages(D.leaders) + `<div class="scroll" style="margin-top:12px"><table><tr><th>Role</th><th>Name</th><th>Department</th><th>Status</th><th>Self</th><th>Final</th></tr>${D.leaders.map(x => `<tr><td>${esc(x.role)}</td><td>${esc(x.name)} <span class="mute">${esc(x.username)}</span></td><td>${esc(x.dept || '–')}</td><td>${badge(x.status)}</td><td>${x.self ?? '–'}</td><td>${x.final ?? '–'}</td></tr>`).join('')}</table></div>`)}`;
 }
@@ -580,7 +586,7 @@ async function route() {
     const p = new URLSearchParams(location.hash.slice(1));
     if (ME.mustChange || p.has('pw')) passwordPage(ME.mustChange);
     else if (p.has('r')) await openReview(Number(p.get('r')));
-    else if (p.has('rep')) await reportPage(p.get('rep'), p.get('d') || '');
+    else if (p.has('rep')) await reportPage(p.get('rep'), p.get('d') || '', p.get('s'));
     else if (p.has('m') && FM[ME.role]) await openMine(p.get('m'));
     else await home(p.get('t'), p.get('d'));
   } catch (e) {

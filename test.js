@@ -79,6 +79,13 @@ assert.ok(!JSON.stringify(C.IND).includes('claimed only in'));                  
   assert.equal(v.changes[0].remark, 'one course only');                                                                     // B1 0 -> 0 is not a change
   assert.deepEqual(v.levels, [{ level: 'hod', before: 0, after: 22, change: 22, sections: ['A1', 'C1', 'E4'] }, { level: 'principal', before: 22, after: 26, change: 4, sections: ['A1', 'C2'] }, { level: 'secretary', before: 26, after: 27, change: 1, sections: ['A1'] }]);
   assert.deepEqual(v.overall, { before: 0, after: 27, change: 27 }); assert.deepEqual(C.deviation({}).changes, []); }
+// ---- the grid's colour bands; the report's sort orders (not submitted last) and the 'Approved' of the staff and HoD reports
+assert.deepEqual([0, 19.9, 20, 45, 60, 79.9, 80, 100].map(v => C.heatOf(v).label), ['Very weak', 'Very weak', 'Weak', 'Average', 'Good', 'Good', 'Strong', 'Strong']);
+assert.equal(new Set(C.HEAT.map(b => b.color)).size, 5);                                                                       // a separate colour for each band
+{ const rs = [{ name: 'B', self: 40, final: 50 }, { name: 'D', self: null, final: null }, { name: 'A', self: 70, final: 30 }, { name: 'C', self: 55, final: 50 }], by = k => C.sortReport(rs, k).map(x => x.name).join('');
+  assert.deepEqual([by('list'), by('final-desc'), by('final-asc'), by('self-desc'), by('self-asc'), by('nonsense')], ['BDAC', 'BCAD', 'ABCD', 'ACBD', 'BCAD', 'BDAC']); }
+assert.deepEqual(['staff', 'hod'].flatMap(k => ['submitted', 'proceeded', 'finalised', 'draft'].map(st => C.reportStatus(k, st, { finalised: 'Finalised', draft: 'Being filled' }))), ['Approved', 'Approved', 'Finalised', 'Being filled', 'Approved', 'Approved', 'Finalised', 'Being filled']);
+assert.equal(C.reportStatus('vp', 'submitted', { submitted: 'Submitted' }), 'Submitted');
 // ---- the report's stronger / weaker sections: highest / lowest share of the section maximum in the final marks; all ties; none when all are equal
 { const half = Object.fromEntries(C.IND.map(i => [i.code, { final: i.max / 2 }])), sw = rows => { const s = C.strengths(rows); return [s.strong.map(x => x.code), s.weak.map(x => x.code)]; };
   assert.deepEqual(sw({ ...half, A1: { final: 20 }, D1: { final: 0 } }), [['A1'], ['D1']]);                          // 20/20 strongest, 0/10 weakest
@@ -380,6 +387,13 @@ const snap = () => { const out = {}; const walk = d => { for (const e of fs.read
     assert.ok((await (await sec('/api/dashboard')).json()).leaders.some(l => l.role === 'Principal' && l.status === 'submitted'));
     assert.equal((await (await pr('/api/dashboard?d=CSE')).json()).count, 1);
     assert.equal((await lib('/api/dashboard')).status, 403); assert.equal((await j('/api/dashboard')).status, 401);
+    // the dashboard as a PDF on A4 portrait: the HoD's department; the college for the VP; not for a login without a dashboard
+    const dpdf = async (call, q) => { const r = await call('/api/dashboard.pdf' + q); assert.equal(r.status, 200); assert.match(r.headers.get('content-type'), /pdf/); return require('pdf-lib').PDFDocument.load(Buffer.from(await r.arrayBuffer())); };
+    const dp1 = await dpdf(hod, '?d=IT'), dp2 = await dpdf(vpc, ''), dp3 = await dpdf(vpc, '?d=CSE');
+    assert.deepEqual([dp1.getTitle(), dp2.getTitle(), dp3.getTitle()], ['Analytics Dashboard – CSE', 'Analytics Dashboard – Whole college', 'Analytics Dashboard – CSE']);
+    assert.deepEqual([Math.round(dp2.getPage(0).getWidth()), Math.round(dp2.getPage(0).getHeight())], [595, 842]); assert.ok(dp2.getPageCount() >= 2);   // A4 portrait, more pages as needed
+    assert.equal((await lib('/api/dashboard.pdf')).status, 403); assert.equal((await j('/api/dashboard.pdf')).status, 401);
+    for (const srt of ['final-desc', 'self-asc', 'list']) assert.equal((await hod('/api/review/report.pdf?kind=staff&sort=' + srt)).status, 200);   // the report in any sort order
     // ---- the Super Admin: every list and every appraisal (drafts too), view only; dashboards; reopens a leader's form; manages the logins
     const ad = await as('admin', 'admin@nscet'), adList = await (await ad('/api/review/list')).json(), n2 = adList.find(x => x.kind === 'staff' && x.owner === 'N2');
     assert.ok(n2 && n2.status === 'draft' && n2.canOpen && ['staff', 'hod', 'principal', 'librarian', 'pc'].every(k => adList.some(x => x.kind === k)));   // every kind; a draft opens for the Super Admin

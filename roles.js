@@ -3,7 +3,7 @@
 //   /api/review/...  the review of appraisals by the HoD, Vice Principal, Principal and Secretary (who may do what: auth.can)
 // Reviewers' marks and remarks are kept per level (review_marks); the appraisee never sees them. Every change is written to the audit log.
 const path = require('path'), fsp = require('fs').promises;
-const C = require('./public/config.js'), { FORMS } = require('./public/forms.js'), Auth = require('./auth.js'), { buildReport } = require('./report.js'), Dash = require('./dashboard.js');
+const C = require('./public/config.js'), { FORMS } = require('./public/forms.js'), Auth = require('./auth.js'), { buildReport } = require('./report.js'), Dash = require('./dashboard.js'), { buildDashboard } = require('./dashpdf.js');
 
 module.exports = function roles(app, h) {
   const { store, userOf, wrap, ROOT, STAFF, under, within, safeName, str, cleanValue, cleanInd, filesIn, dropUnused, storeUpload, sendProof, upload } = h;
@@ -144,15 +144,15 @@ module.exports = function roles(app, h) {
   // the report of one list as a PDF (?kind=staff&d=CSE): the same appraisals the reviewer's list shows; drafts only as "not submitted yet"
   const STATUS = { draft: 'Being filled', submitted: 'Submitted', proceeded: 'Proceeded by HoD', finalised: 'Finalised' };
   // the analytics dashboards (dashboard.js), from the staff appraisals this login may open: a HoD gets their own department only (whatever is
-  // asked); the Vice Principal, Principal and Secretary get any department (?d=CSE) or the whole college, with the leaders' own appraisals
-  app.get('/api/dashboard', who, wrap(async (req, res) => {
-    const u = req.user; if (!['hod', 'vp', 'principal', 'secretary', 'admin'].includes(u.role)) return res.status(403).json({ error: 'This login has no dashboard.' });
-    const dept = u.role === 'hod' ? u.dept : C.DEPARTMENTS.includes(req.query.d) ? req.query.d : '';
+  // asked); the Vice Principal, Principal, Secretary and Super Admin get any department (?d=CSE) or the whole college, with the leaders' own appraisals
+  const DASH_ROLES = ['hod', 'vp', 'principal', 'secretary', 'admin'];
+  async function dashboardOf(u, d) {
+    const dept = u.role === 'hod' ? u.dept : C.DEPARTMENTS.includes(d) ? d : '';
     await syncStaff();
     const items = [];
     for (const r of await store.all('staff')) if ((!dept || r.dept === dept) && r.status !== 'draft' && !r.removed && Auth.can(u, 'view', r))   // submitted ones only (the Super Admin can open drafts too)
       items.push({ code: r.owner, name: r.name, designation: (r.data.p1 || {}).designation || '', dept: r.dept, data: r.data, levels: await levelsOf(r.id) });
-    if (dept) return res.json({ scope: 'dept', dept, ...Dash.department(items) });
+    if (dept) return { scope: 'dept', dept, ...Dash.department(items) };
     const kinds = LIST[u.role].filter(k => k !== 'staff'), rows = await store.listOf(kinds, null), leaders = [];
     for (const a of (await store.listAccounts()).filter(a => a.active && kinds.includes(a.role)).sort((x, y) => C.KINDS.indexOf(x.role) - C.KINDS.indexOf(y.role))) {
       const mine = rows.filter(r => r.kind === a.role && String(r.owner).toLowerCase() === a.username.toLowerCase());
@@ -160,23 +160,36 @@ module.exports = function roles(app, h) {
         leaders.push({ role: C.ROLES[a.role], name: a.name, username: a.username, dept: a.dept || '', term: r ? r.term : '', status: r ? r.status : 'not started',
           self: open ? Number(r.self_total) : null, final: open ? Number(r.final_total ?? r.self_total) : null }); }
     }
-    res.json({ scope: 'college', ...Dash.college(items, leaders) });
+    return { scope: 'college', ...Dash.college(items, leaders) };
+  }
+  app.get('/api/dashboard', who, wrap(async (req, res) => {
+    if (!DASH_ROLES.includes(req.user.role)) return res.status(403).json({ error: 'This login has no dashboard.' });
+    res.json(await dashboardOf(req.user, req.query.d));
   }));
+  // the same dashboard as a PDF on A4 (dashpdf.js): as many pages as it needs, no chart cut between pages
+  app.get('/api/dashboard.pdf', who, wrap(async (req, res) => {
+    const u = req.user; if (!DASH_ROLES.includes(u.role)) return res.status(403).json({ error: 'This login has no dashboard.' });
+    const D = await dashboardOf(u, req.query.d), what = D.scope === 'dept' ? D.dept : 'Whole college';
+    const pdf = await buildDashboard(D, { year: C.YEAR_LABEL, title: 'Analytics Dashboard – ' + what,
+      subtitle: `Academic year ${C.YEAR_FULL}  ·  generated ${C.when(new Date().toISOString())} by ${u.name} (${C.ROLES[u.role]})  ·  final marks (after review)` });
+    res.type('pdf').set('Content-Disposition', `attachment; filename="Appraisal-Dashboard-${what.replace(/[^A-Za-z0-9]+/g, '-')}-${C.YEAR}.pdf"`).send(pdf);
+  }));
+  // the report of one list as a PDF (?kind=staff&d=CSE&sort=final-desc): the same appraisals the reviewer's list shows; drafts only as "not submitted yet"
   app.get('/api/review/report.pdf', who, wrap(async (req, res) => {
     const u = req.user, kind = String(req.query.kind || ''), dept = str(req.query.d, 10);
     if (!(LIST[u.role] || []).includes(kind)) return res.status(403).json({ error: 'This report is not available to your login.' });
     if (kind === 'staff') await syncStaff();
-    const form = formOf(kind), rows = [];
+    const form = formOf(kind), list = [];
     for (const r of (await store.listOf([kind], u.role === 'hod' ? u.dept : null)).filter(r => !dept || r.dept === dept)) {
       const t = r.status !== 'draft' && Auth.can(u, 'view', r) ? (await review(await store.byId(r.id), u)).totals : null, sw = t ? C.strengths(t.rows, form.ind) : { weak: [], strong: [] };
-      rows.push({ code: r.owner, name: r.name || '-', designation: r.designation, status: STATUS[r.status] || r.status, self: t && t.self, final: t && t.final, weak: sw.weak, strong: sw.strong });
+      list.push({ code: r.owner, name: r.name || '-', designation: r.designation, status: C.reportStatus(kind, r.status, STATUS), self: t && t.self, final: t && t.final, weak: sw.weak, strong: sw.strong });
     }
-    const done = rows.filter(x => x.self != null), avg = f => (done.length ? String(Math.round(done.reduce((s, x) => s + f(x), 0) / done.length * 10) / 10) : '-');
+    const rows = C.sortReport(list, req.query.sort), done = rows.filter(x => x.self != null), avg = f => (done.length ? String(Math.round(done.reduce((s, x) => s + f(x), 0) / done.length * 10) / 10) : '-');
     const what = (kind === 'staff' ? 'Staff' : C.ROLES[kind]) + (dept || u.dept ? ' – ' + (dept || u.dept) : '');
     const pdf = await buildReport({ year: C.YEAR_LABEL, title: 'Appraisal Report – ' + what, by: `${u.name} (${C.ROLES[u.role]})`,
-      subtitle: `Academic year ${C.YEAR_FULL}  ·  generated ${C.when(new Date().toISOString())} by ${u.name} (${C.ROLES[u.role]})`,
-      summary: [['Listed', String(rows.length)], ['Submitted', String(done.length)], ['Not submitted yet', String(rows.length - done.length)],
-        ['Average self', avg(x => x.self)], ['Average final', avg(x => x.final)], ['Average change', done.length ? (n => (n > 0 ? '+' : '') + n)(Math.round(done.reduce((s, x) => s + x.final - x.self, 0) / done.length * 10) / 10) : '-']],
+      subtitle: `Academic year ${C.YEAR_FULL}  ·  generated ${C.when(new Date().toISOString())} by ${u.name} (${C.ROLES[u.role]})${C.REPORT_SORTS[req.query.sort] && req.query.sort !== 'list' ? '  ·  sorted by ' + C.REPORT_SORTS[req.query.sort].toLowerCase() : ''}`,
+      summary: [['Total Faculty Members', String(rows.length)], ['Submitted Faculty records', String(done.length)],
+        ['Average Self Assessment Score', avg(x => x.self)], ['Average Final Assessment Score', avg(x => x.final)]],
       note: 'Self = the marks calculated from the entries; Final = after the review (HoD, Vice Principal, Principal, Secretary); Change = Final - Self. Weaker / stronger section = the section(s) with the lowest / highest share of their maximum marks in the final marks.',
       rows });
     res.type('pdf').set('Content-Disposition', `attachment; filename="Appraisal-Report-${what.replace(/[^A-Za-z0-9]+/g, '-')}-${C.YEAR}.pdf"`).send(pdf);

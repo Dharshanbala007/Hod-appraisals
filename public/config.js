@@ -346,6 +346,18 @@
     return { changes, levels, overall: { before: t.self, after: t.final, change: t.final - t.self } };
   }
 
+  // The department x section grid of the dashboard: one colour per band of the share of the maximum (red = very weak ... green = strong)
+  const HEAT = [{ to: 20, color: '#d03b3b', ink: '#ffffff', label: 'Very weak' }, { to: 40, color: '#ec835a', ink: '#0b0b0b', label: 'Weak' },
+    { to: 60, color: '#fab219', ink: '#0b0b0b', label: 'Average' }, { to: 80, color: '#7cc47f', ink: '#0b0b0b', label: 'Good' }, { to: Infinity, color: '#1e8e3e', ink: '#ffffff', label: 'Strong' }];
+  const heatOf = v => HEAT.find(b => v < b.to);
+  // the report: its sort orders (forms not submitted yet always last), and the status words of the staff and HoD reports
+  const REPORT_SORTS = { list: 'List order', 'final-desc': 'Final score: high to low', 'final-asc': 'Final score: low to high', 'self-desc': 'Self score: high to low', 'self-asc': 'Self score: low to high' };
+  function sortReport(rows, by) {   // rows: [{ self, final, name }] (self == null = not submitted yet)
+    const [k, dir] = String(by || '').split('-'); if (!['final', 'self'].includes(k)) return rows.slice();
+    return rows.slice().sort((a, b) => (a.self == null) - (b.self == null) || (dir === 'asc' ? 1 : -1) * ((a[k] ?? 0) - (b[k] ?? 0)) || String(a.name).localeCompare(String(b.name)));
+  }
+  const reportStatus = (kind, status, words) => ((kind === 'staff' || kind === 'hod') && (status === 'submitted' || status === 'proceeded') ? 'Approved' : words[status] || status);
+
   // The stronger and weaker sections of an appraisal: the highest / lowest share of the section's maximum in the final marks
   // (rows = totals().rows; every tie is listed). When all sections have the same share there is neither.
   function strengths(rows, inds = IND) {
@@ -365,6 +377,6 @@
     return list;
   }
 
-  const api = { DEPARTMENTS, deptOf, maxMB, MAX_MB_ANY, YEAR, YEAR_LABEL, YEAR_FULL, IND, DOMAINS, CHECKS, LEVELS, ROLES, KINDS, pad, score, totals, deviation, strengths, proofs, problems, problemsFor, when, entryLines, hasProof, rowsOf, rowText, rowDate, normPeriod, isPeriod, parseDate, complete, started, groupOf, val };
+  const api = { DEPARTMENTS, deptOf, maxMB, MAX_MB_ANY, YEAR, YEAR_LABEL, YEAR_FULL, IND, DOMAINS, CHECKS, LEVELS, ROLES, KINDS, pad, score, totals, deviation, strengths, HEAT, heatOf, REPORT_SORTS, sortReport, reportStatus, proofs, problems, problemsFor, when, entryLines, hasProof, rowsOf, rowText, rowDate, normPeriod, isPeriod, parseDate, complete, started, groupOf, val };
   if (typeof module !== 'undefined') module.exports = api; else root.CFG = api;
 })(typeof window !== 'undefined' ? window : globalThis);

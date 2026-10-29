@@ -1,5 +1,5 @@
 // The report of a review list as a PDF (A4 landscape): college letterhead, title, summary, one row per appraisal with its self, final and
-// change and its weaker / stronger sections, page numbers and a signature line. Same look as the staff site's appraisal PDF (pdfkit).
+// change and its weaker / stronger sections, and page numbers. Same look as the staff site's appraisal PDF (pdfkit).
 const PDFKit = require('pdfkit'), path = require('path');
 const HEADER = path.join(__dirname, 'public', 'college-header.png');
 const PW = 841.89, PH = 595.28, L = 32, W = PW - 2 * L, BOTTOM = PH - 40;
@@ -49,13 +49,9 @@ function buildReport(r) {
     r.rows.forEach((x, k) => drawRow([String(k + 1), x.code, x.name + (x.designation ? '\n' + x.designation : ''), x.status,
       ...(x.self == null ? ['-', '-', '-', 'Not submitted yet', ''] : [String(r1(x.self)), String(r1(x.final)), sign(x.final - x.self), secs(x.weak), secs(x.strong)])].map(plain), { shade: k % 2 === 1 }));
 
-    // note and signature
-    if (doc.y + 90 > BOTTOM) { doc.addPage(); doc.y = L; }
+    // the note under the table
+    if (doc.y + 40 > BOTTOM) { doc.addPage(); doc.y = L; }
     doc.font('Helvetica').fontSize(8).fillColor('#444').text(plain(r.note), L, doc.y + 8, { width: W }).fillColor('#000');
-    const sy = doc.y + 34;
-    doc.moveTo(PW - L - 220, sy).lineTo(PW - L, sy).stroke('#000');
-    doc.font('Helvetica').fontSize(9).text(plain(r.by), PW - L - 220, sy + 4, { width: 220, align: 'center' });
-    doc.fontSize(8).fillColor('#444').text('Signature and date', PW - L - 220, sy + 16, { width: 220, align: 'center' }).fillColor('#000');
 
     // page numbers
     const n = doc.bufferedPageRange().count;
