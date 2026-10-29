@@ -20,7 +20,7 @@ CREATE TABLE IF NOT EXISTS appraisals (id INT UNSIGNED AUTO_INCREMENT PRIMARY KE
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   UNIQUE KEY one_per_period (kind, owner, year, term), KEY by_dept (dept, kind)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
-CREATE TABLE IF NOT EXISTS review_marks (appraisal_id INT UNSIGNED NOT NULL, stage ENUM('hod', 'vp', 'principal', 'secretary') NOT NULL, section VARCHAR(10) NOT NULL,
+CREATE TABLE IF NOT EXISTS review_marks (appraisal_id INT UNSIGNED NOT NULL, stage ENUM('hod', 'vp', 'principal', 'secretary', 'admin') NOT NULL, section VARCHAR(10) NOT NULL,
   marks DECIMAL(5,1) NULL, remark TEXT NULL, updated_by VARCHAR(40) NOT NULL, updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (appraisal_id, stage, section), CONSTRAINT fk_marks_appraisal FOREIGN KEY (appraisal_id) REFERENCES appraisals (id) ON DELETE CASCADE) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 

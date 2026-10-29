@@ -263,9 +263,9 @@ async function openReview(id) {
 function renderReview() {
   const f = formOf(R.kind), d = R.data, t = R.totals, dv = R.deviation, mine = R.can.edit ? R.level : null, ml = R.levels[mine] || { ind: {} };
   const refs = C.proofs(d, f.ind), refOf = new Map(refs.map(p => [p.e, p.ref])), fileUrl = s => `/api/review/${R.id}/file/${encodeURIComponent(s)}`;
-  const why = R.can.edit ? `You are reviewing as <b>${LV[mine]}</b>. Type a mark only where you change it and write why in the remark box beside it; an empty box means no change at your level.`
-    : ME.role === 'admin' ? 'Super Admin: view only – the marks are changed by the reviewers.' + (R.status === 'draft' ? ' This form is still being filled by its owner.' : '')
-    : R.status === 'finalised' ? 'Finalised – view only. Only the Secretary can still change marks.'
+  const why = R.can.edit ? `You are reviewing as <b>${LV[mine]}</b>.${mine === 'admin' ? ' Your mark is final: it counts over the HoD, Vice Principal, Principal and Secretary (theirs stay in the history).' : ''} Type a mark only where you change it and write why in the remark box beside it; an empty box means no change at your level.`
+    : ME.role === 'admin' ? 'Super Admin: view only here – ' + (R.status === 'draft' ? 'this form is still being filled by its owner.' : 'you change marks on staff and HoD appraisals.')
+    : R.status === 'finalised' ? 'Finalised – view only. Only the Secretary (and, on staff and HoD appraisals, the Super Admin) can still change marks.'
     : R.kind === 'staff' && R.status === 'submitted' ? 'Waiting for the HoD to proceed – view only for now.'
     : R.kind === 'staff' && ME.role === 'hod' ? 'You have proceeded this appraisal – view only now.' : 'View only.';
   const levelRows = ind => {
@@ -338,7 +338,7 @@ async function saveReview() {
 async function act(kind) {
   if (!confirm(kind === 'reopen' ? 'Reopen this form so its owner can correct it?\n\nIt goes back to "being filled"; the review marks are kept, and it is reviewed again after the owner submits it.'
     : kind === 'proceed' ? 'Proceed this appraisal to the Vice Principal / Principal?\n\nAfter you proceed, your marks are locked and you can only view it.'
-    : 'Finalise this appraisal?\n\nAfter you finalise, it is locked for the HoD, Vice Principal and Principal. Only the Secretary can still change marks.')) return;
+    : 'Finalise this appraisal?\n\nAfter you finalise, it is locked for the HoD, Vice Principal and Principal. Only the Secretary (and, on staff and HoD appraisals, the Super Admin) can still change marks.')) return;
   if (DIRTY) await saveReview();
   R = await api(`/api/review/${R.id}/${kind}`, { method: 'POST' }); LOG = await api(`/api/review/${R.id}/log`).catch(() => LOG); DIRTY = false;
   renderReview(); scrollTo(0, 0);

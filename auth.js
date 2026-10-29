@@ -21,9 +21,10 @@ async function check(pw, stored) {
 //   Principal             the same, and also the Vice Principal's appraisal
 //   Secretary             everyone, including the Principal: view and edit at any time (master control)
 //   Placement Officer, Placement Co-ordinator, Librarian, Physical Director: their own appraisal only
-//   Super Admin           every appraisal, drafts too: view only (marks are changed by the reviewers); also manages the logins and reopens forms
+//   Super Admin           every appraisal, drafts too: view; staff and HoD appraisals (once submitted): edit at any time, at the top level
+//                         (their mark is final); also manages the logins and reopens forms
 function can(user, action, a) {
-  if (user && a && user.role === 'admin') return action === 'view' && !!a.status;
+  if (user && a && user.role === 'admin') return !!a.status && (action === 'view' || (action === 'edit' && (a.kind === 'staff' || a.kind === 'hod') && a.status !== 'draft'));
   if (!user || !a || !a.status || a.status === 'draft') return false;
   const { role } = user, k = a.kind, st = a.status, view = action === 'view', change = action === 'edit' || action === 'finalise';
   if (role === 'secretary') return view || action === 'edit';

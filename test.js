@@ -74,7 +74,7 @@ assert.ok(!JSON.stringify(C.IND).includes('claimed only in'));                  
 { const d = { ind: {}, hod: { ind: { A1: { marks: 12, remark: 'one course only' }, E4: { marks: 5 }, B1: { marks: 0 }, C1: { marks: 99 } } }, principal: { ind: { C2: { marks: 6 }, A1: { marks: 10 } } }, secretary: { ind: { A1: { marks: 11 } } } };
   const t = C.totals(d), v = C.deviation(d);
   assert.equal(t.rows.C1.hod, 5); assert.equal(t.rows.A1.final, 11);                                                       // capped at the section maximum; the latest level decides
-  assert.deepEqual(t.after, { self: 0, hod: 22, vp: 22, principal: 26, secretary: 27 }); assert.equal(t.final, 27);
+  assert.deepEqual(t.after, { self: 0, hod: 22, vp: 22, principal: 26, secretary: 27, admin: 27 }); assert.equal(t.final, 27);
   assert.deepEqual(v.changes.map(c => [c.level, c.code, c.before, c.after, c.change]), [['hod', 'A1', 0, 12, 12], ['hod', 'C1', 0, 5, 5], ['hod', 'E4', 0, 5, 5], ['principal', 'A1', 12, 10, -2], ['principal', 'C2', 0, 6, 6], ['secretary', 'A1', 10, 11, 1]]);
   assert.equal(v.changes[0].remark, 'one course only');                                                                     // B1 0 -> 0 is not a change
   assert.deepEqual(v.levels, [{ level: 'hod', before: 0, after: 22, change: 22, sections: ['A1', 'C1', 'E4'] }, { level: 'principal', before: 22, after: 26, change: 4, sections: ['A1', 'C2'] }, { level: 'secretary', before: 26, after: 27, change: 1, sections: ['A1'] }]);
@@ -101,9 +101,9 @@ assert.ok(!JSON.stringify(C.IND).includes('claimed only in'));                  
   assert.ok(A.can(pr, 'edit', ap('vp', 'submitted')) && A.can(pr, 'finalise', ap('vp', 'submitted')) && !A.can(vp, 'view', ap('vp', 'submitted')));   // only the Principal validates the VP's form
   assert.ok(['staff', 'hod', 'vp', 'principal', 'po', 'pc', 'librarian', 'pd'].every(k => A.can(sec, 'edit', ap(k, 'finalised')) && A.can(sec, 'view', ap(k, 'submitted'))) && !A.can(sec, 'finalise', ap('staff', 'proceeded')) && !A.can(sec, 'view', ap('staff', 'draft')));
   assert.ok(['po', 'pc', 'librarian', 'pd'].every(r => !A.can(u(r), 'view', ap('staff', 'proceeded')) && !A.can(u(r), 'view', ap('hod', 'submitted'))));   // the new roles: their own appraisal only
-  assert.deepEqual(['hod', 'vp', 'principal', 'secretary', 'po', 'librarian', 'admin'].map(A.levelOf), ['hod', 'vp', 'principal', 'secretary', null, null, null]);
-  const adm = u('admin');                                                                                                       // the Super Admin: sees everything, drafts too, changes nothing
-  assert.ok(C.KINDS.every(k => ['draft', 'submitted', 'proceeded', 'finalised'].every(st => A.can(adm, 'view', ap(k, st)) && !A.can(adm, 'edit', ap(k, st)) && !A.can(adm, 'proceed', ap(k, st)) && !A.can(adm, 'finalise', ap(k, st)))));
+  assert.deepEqual(['hod', 'vp', 'principal', 'secretary', 'po', 'librarian', 'admin'].map(A.levelOf), ['hod', 'vp', 'principal', 'secretary', null, null, 'admin']);
+  const adm = u('admin');                       // the Super Admin: sees everything, drafts too; changes the marks of staff and HoD appraisals (not drafts) at any time; no Proceed / Finalise
+  assert.ok(C.KINDS.every(k => ['draft', 'submitted', 'proceeded', 'finalised'].every(st => A.can(adm, 'view', ap(k, st)) && A.can(adm, 'edit', ap(k, st)) === (['staff', 'hod'].includes(k) && st !== 'draft') && !A.can(adm, 'proceed', ap(k, st)) && !A.can(adm, 'finalise', ap(k, st)))));
   for (let i = 0; i < 5; i++) A.failed('Someone'); assert.ok(A.locked('someone')); A.forgive('SOMEONE'); assert.ok(!A.locked('someone')); }   // 5 wrong passwords lock the username
 // ---- the HoD, Vice Principal / Principal, Placement Officer, Placement Co-ordinator, Librarian and Physical Director forms (from the templates)
 { const { FORMS } = require('./public/forms.js');
@@ -195,6 +195,17 @@ const snap = () => { const out = {}; const walk = d => { for (const e of fs.read
       .then(() => db.listAccounts()).then(async a => { console.log(JSON.stringify([a.map(x => x.username + ':' + x.role + ':' + x.must_change), (await db.findAccount('oldhod')).password_hash])); await db.close(); })`],
       { cwd: __dirname, env: { ...process.env, DB_HOST: '', DB_FILE: f }, encoding: 'utf8' });
     assert.equal(run.stdout.trim(), JSON.stringify([['admin2:admin:1', 'oldhod:hod:0'], 'kept'])); for (const x of ['', '-wal', '-shm']) fs.rmSync(f + x, { force: true }); }
+  { // review marks saved before the Super Admin's level (the stage CHECK lacks 'admin'): the table is rebuilt, every mark kept
+    const f = path.join(os.tmpdir(), `old-marks-${process.pid}.sqlite`);
+    const run = require('child_process').spawnSync('node', ['-e', `const db = require('./db.js'), { DatabaseSync } = require('node:sqlite');
+      (async () => { await db.setup(); const r = await db.create({ kind: 'staff', owner: 'X1', year: '2025-26', folder: 'x', data: { p1: {}, ind: {} } });
+        await db.setMark(r.id, 'hod', 'A1', 5, 'by the HoD', 'h'); await db.close();
+        const raw = new DatabaseSync(process.env.DB_FILE), sql = raw.prepare("SELECT sql FROM sqlite_master WHERE name = 'review_marks'").get().sql.replace(", 'admin'", '');
+        raw.exec('PRAGMA foreign_keys = OFF; ALTER TABLE review_marks RENAME TO rm_new; ' + sql + '; INSERT INTO review_marks SELECT * FROM rm_new; DROP TABLE rm_new;'); raw.close();
+        await db.setup(); await db.setMark(r.id, 'admin', 'A1', 7, 'final', 'a');
+        console.log(JSON.stringify((await db.marksOf(r.id)).map(m => m.stage + ':' + m.marks + ':' + m.remark).sort())); await db.close(); })()`],
+      { cwd: __dirname, env: { ...process.env, DB_HOST: '', DB_FILE: f }, encoding: 'utf8' });
+    assert.equal(run.stdout.trim(), JSON.stringify(['admin:7:final', 'hod:5:by the HoD']), run.stderr); for (const x of ['', '-wal', '-shm']) fs.rmSync(f + x, { force: true }); }
   await freshDb();
   let srv = await boot();
   try {
@@ -350,8 +361,16 @@ const snap = () => { const out = {}; const walk = d => { for (const e of fs.read
     const ad = await as('admin', 'admin@nscet'), adList = await (await ad('/api/review/list')).json(), n2 = adList.find(x => x.kind === 'staff' && x.owner === 'N2');
     assert.ok(n2 && n2.status === 'draft' && n2.canOpen && ['staff', 'hod', 'principal', 'librarian', 'pc'].every(k => adList.some(x => x.kind === k)));   // every kind; a draft opens for the Super Admin
     assert.equal((await ad('/api/review/' + n2.id)).status, 200); assert.equal((await hod('/api/review/' + n2.id)).status, 404);           // ... not for the HoD
-    const adT1 = await (await ad('/api/review/' + t1.id)).json(); assert.deepEqual([adT1.can.edit, adT1.can.proceed, adT1.can.finalise, adT1.level], [false, false, false, null]);
-    assert.equal((await ad('/api/review/' + t1.id, { method: 'PUT', json: { marks: { A1: { marks: '1' } } } })).status, 403); assert.equal((await ad('/api/review/' + t1.id + '/finalise', { method: 'POST' })).status, 403);
+    const adT1 = await (await ad('/api/review/' + t1.id)).json(); assert.deepEqual([adT1.can.edit, adT1.can.proceed, adT1.can.finalise, adT1.level], [true, false, false, 'admin']);
+    // the Super Admin's mark is final on a staff appraisal (over the Secretary's 13), every level stays in the history; no Proceed / Finalise
+    rv = await (await ad('/api/review/' + t1.id, { method: 'PUT', json: { marks: { A1: { marks: '17', remark: 'checked with the result sheet' } } } })).json();
+    assert.deepEqual([rv.totals.rows.A1.secretary, rv.totals.rows.A1.admin, rv.totals.rows.A1.final], [13, 17, 17]); assert.deepEqual(rv.deviation.levels.at(-1).level, 'admin');
+    assert.equal((await ad('/api/review/' + t1.id, { method: 'PUT', json: { marks: { A1: { marks: '21' } } } })).status, 400); assert.equal((await ad('/api/review/' + t1.id + '/finalise', { method: 'POST' })).status, 403);
+    assert.match((await (await ad('/api/review/' + t1.id + '/log')).json()).map(x => x.who + ' ' + x.action + ' ' + x.detail).join('\n'), /admin marks \(Super Admin\) A1: 13 -> 17/);
+    assert.equal((await (await sec('/api/review/list')).json()).find(x => x.id === t1.id).final, rv.totals.final);                    // the lists show it
+    // ... and on a HoD appraisal; the VP's and Principal's own forms stay view only for the Super Admin
+    const hodR = await (await ad('/api/review/' + hodRow.id, { method: 'PUT', json: { marks: { C1: { marks: '6', remark: 'minutes seen' } } } })).json(); assert.deepEqual([hodR.totals.rows.C1.final, hodR.totals.final], [6, 6]);
+    assert.equal((await (await ad('/api/review/' + prRow.id)).json()).can.edit, false); assert.equal((await ad('/api/review/' + prRow.id, { method: 'PUT', json: { marks: { A1: { marks: '1' } } } })).status, 403);
     assert.equal((await (await ad('/api/dashboard')).json()).count, (await (await sec('/api/dashboard')).json()).count);            // drafts stay out of the statistics
     assert.equal((await (await ad('/api/dashboard?d=CSE')).json()).count, 1);
     // reopen: the Principal's submitted form goes back to the Principal (marks kept); not a staff form, and nobody else can
