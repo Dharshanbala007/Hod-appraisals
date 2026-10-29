@@ -79,12 +79,12 @@ assert.ok(!JSON.stringify(C.IND).includes('claimed only in'));                  
   assert.equal(v.changes[0].remark, 'one course only');                                                                     // B1 0 -> 0 is not a change
   assert.deepEqual(v.levels, [{ level: 'hod', before: 0, after: 22, change: 22, sections: ['A1', 'C1', 'E4'] }, { level: 'principal', before: 22, after: 26, change: 4, sections: ['A1', 'C2'] }, { level: 'secretary', before: 26, after: 27, change: 1, sections: ['A1'] }]);
   assert.deepEqual(v.overall, { before: 0, after: 27, change: 27 }); assert.deepEqual(C.deviation({}).changes, []); }
-// ---- the grid's colour bands; the report's sort orders (not submitted last) and the 'Approved' of the staff and HoD reports
+// ---- the grid's colour bands; the report's sort orders (not submitted last) and the Proceed / Not proceed of the staff and HoD reports
 assert.deepEqual([0, 19.9, 20, 45, 60, 79.9, 80, 100].map(v => C.heatOf(v).label), ['Very weak', 'Very weak', 'Weak', 'Average', 'Good', 'Good', 'Strong', 'Strong']);
 assert.equal(new Set(C.HEAT.map(b => b.color)).size, 5);                                                                       // a separate colour for each band
 { const rs = [{ name: 'B', self: 40, final: 50 }, { name: 'D', self: null, final: null }, { name: 'A', self: 70, final: 30 }, { name: 'C', self: 55, final: 50 }], by = k => C.sortReport(rs, k).map(x => x.name).join('');
   assert.deepEqual([by('list'), by('final-desc'), by('final-asc'), by('self-desc'), by('self-asc'), by('nonsense')], ['BDAC', 'BCAD', 'ABCD', 'ACBD', 'BCAD', 'BDAC']); }
-assert.deepEqual(['staff', 'hod'].flatMap(k => ['submitted', 'proceeded', 'finalised', 'draft'].map(st => C.reportStatus(k, st, { finalised: 'Finalised', draft: 'Being filled' }))), ['Approved', 'Approved', 'Finalised', 'Being filled', 'Approved', 'Approved', 'Finalised', 'Being filled']);
+assert.deepEqual(['staff', 'hod'].flatMap(k => ['submitted', 'proceeded', 'finalised', 'draft'].map(st => C.reportStatus(k, st, { finalised: 'Finalised', draft: 'Being filled' }))), ['Proceed', 'Proceed', 'Proceed', 'Not proceed', 'Proceed', 'Proceed', 'Proceed', 'Not proceed']);
 assert.equal(C.reportStatus('vp', 'submitted', { submitted: 'Submitted' }), 'Submitted');
 // ---- the report's stronger / weaker sections: highest / lowest share of the section maximum in the final marks; all ties; none when all are equal
 { const half = Object.fromEntries(C.IND.map(i => [i.code, { final: i.max / 2 }])), sw = rows => { const s = C.strengths(rows); return [s.strong.map(x => x.code), s.weak.map(x => x.code)]; };
