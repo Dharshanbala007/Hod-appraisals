@@ -14,7 +14,7 @@ const C = require('./public/config.js'), db = require('./db.js'), A = require('.
 const USER_RE = /^[A-Za-z0-9._-]{3,40}$/;
 const [cmd, ...args] = process.argv.slice(2);
 const fail = m => { console.log(m); process.exitCode = 1; };
-const usage = () => fail('usage:\n  node accounts.js add hod <DEPT> <username> "<Full name>"\n  node accounts.js add vp|principal|secretary|po|pc|librarian|pd <username> "<Full name>"\n  node accounts.js list | reset <username> | disable <username> | enable <username>');
+const usage = () => fail('usage:\n  node accounts.js add hod <DEPT> <username> "<Full name>"\n  node accounts.js add vp|principal|secretary|po|pc|librarian|pd|admin <username> "<Full name>"\n  node accounts.js list | reset <username> | disable <username> | enable <username>');
 
 // hidden typing on a terminal; from a pipe the lines are read in order (scripts, tests)
 let piped;

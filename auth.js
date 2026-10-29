@@ -21,7 +21,9 @@ async function check(pw, stored) {
 //   Principal             the same, and also the Vice Principal's appraisal
 //   Secretary             everyone, including the Principal: view and edit at any time (master control)
 //   Placement Officer, Placement Co-ordinator, Librarian, Physical Director: their own appraisal only
+//   Super Admin           every appraisal, drafts too: view only (marks are changed by the reviewers); also manages the logins and reopens forms
 function can(user, action, a) {
+  if (user && a && user.role === 'admin') return action === 'view' && !!a.status;
   if (!user || !a || !a.status || a.status === 'draft') return false;
   const { role } = user, k = a.kind, st = a.status, view = action === 'view', change = action === 'edit' || action === 'finalise';
   if (role === 'secretary') return view || action === 'edit';
@@ -65,12 +67,14 @@ const forgive = u => tries.delete(String(u).toLowerCase());
 //   hodcse, hodaids, hodit, hodeee, hodece, hodmech, hodcivil, hodsh  (one-time password hod@nscet)
 //   vp, principal, secretary, po, pc, librarian, pd                   (one-time password <username>@nscet, e.g. principal@nscet)
 //   pc2, pc3: the college's two more Placement Co-ordinators, the same form as pc    (pc2@nscet, pc3@nscet)
+//   admin: the Super Admin (sees everything, manages the logins, reopens forms)   (admin@nscet)
 // A login is made only while that role (for a HoD: that department's HoD) has none, so a login the administrator replaced is not made again;
 // the extra Placement Co-ordinators while their username is free.
 const DEFAULT_LOGINS = [
   ...C.DEPARTMENTS.map(d => ({ username: 'hod' + d.toLowerCase().replace(/[^a-z0-9]/g, ''), name: 'HoD ' + d, role: 'hod', dept: d, otp: 'hod@nscet' })),
   ...['vp', 'principal', 'secretary', 'po', 'pc', 'librarian', 'pd'].map(r => ({ username: r, name: C.ROLES[r], role: r, dept: null, otp: r + '@nscet' })),
   ...['pc2', 'pc3'].map((u, i) => ({ username: u, name: `${C.ROLES.pc} ${i + 2}`, role: 'pc', dept: null, otp: u + '@nscet', extra: true })),
+  { username: 'admin', name: C.ROLES.admin, role: 'admin', dept: null, otp: 'admin@nscet' },
 ];
 async function seedLogins(store) {
   const made = [];

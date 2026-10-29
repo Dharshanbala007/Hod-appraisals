@@ -107,8 +107,11 @@ The first start makes one login per HoD and role, each with a **one-time passwor
 |---|---|
 | `hodcse`, `hodaids`, `hodit`, `hodeee`, `hodece`, `hodmech`, `hodcivil`, `hodsh` | `hod@nscet` |
 | `vp`, `principal`, `secretary`, `po`, `pc`, `pc2`, `pc3`, `librarian`, `pd` | `<username>@nscet` (e.g. `principal@nscet`, `pc2@nscet`) |
+| `admin` (Super Admin) | `admin@nscet` |
 
-More logins, forgotten passwords:
+The **Super Admin** (`admin`) sees every appraisal, drafts too (view only), all dashboards and reports, reopens a submitted HoD / VP / Principal / officer form for correction, and manages the logins on the **Logins** page: add a login, give a new one-time password, disable / enable.
+
+Or on the server, with the account command:
 
 ```bash
 node accounts.js list

@@ -95,7 +95,7 @@ module.exports = function roles(app, h) {
 
   // ================= review
   // what each reviewer's lists contain (opening one still needs can(view): drafts stay closed)
-  const LIST = { hod: ['staff'], vp: ['staff', 'hod', 'po', 'pc', 'librarian', 'pd'], principal: ['staff', 'hod', 'vp', 'po', 'pc', 'librarian', 'pd'], secretary: C.KINDS };
+  const LIST = { hod: ['staff'], vp: ['staff', 'hod', 'po', 'pc', 'librarian', 'pd'], principal: ['staff', 'hod', 'vp', 'po', 'pc', 'librarian', 'pd'], secretary: C.KINDS, admin: C.KINDS };
   // the reviewer's notes of a form: verification checks (Yes / No + comment), review controls and approval items (text)
   const notesFor = kind => (kind === 'staff' ? C.CHECKS.map((c, i) => ({ key: 'check:' + (i + 1), label: c, yesno: true }))
     : FORMS[kind].checks ? FORMS[kind].checks.map((c, i) => ({ key: 'check:' + (i + 1), label: c, yesno: true }))
@@ -135,17 +135,17 @@ module.exports = function roles(app, h) {
   // the analytics dashboards (dashboard.js), from the staff appraisals this login may open: a HoD gets their own department only (whatever is
   // asked); the Vice Principal, Principal and Secretary get any department (?d=CSE) or the whole college, with the leaders' own appraisals
   app.get('/api/dashboard', who, wrap(async (req, res) => {
-    const u = req.user; if (!['hod', 'vp', 'principal', 'secretary'].includes(u.role)) return res.status(403).json({ error: 'This login has no dashboard.' });
+    const u = req.user; if (!['hod', 'vp', 'principal', 'secretary', 'admin'].includes(u.role)) return res.status(403).json({ error: 'This login has no dashboard.' });
     const dept = u.role === 'hod' ? u.dept : C.DEPARTMENTS.includes(req.query.d) ? req.query.d : '';
     await syncStaff();
     const items = [];
-    for (const r of await store.all('staff')) if ((!dept || r.dept === dept) && Auth.can(u, 'view', r))
+    for (const r of await store.all('staff')) if ((!dept || r.dept === dept) && r.status !== 'draft' && Auth.can(u, 'view', r))   // submitted ones only (the Super Admin can open drafts too)
       items.push({ code: r.owner, name: r.name, designation: (r.data.p1 || {}).designation || '', dept: r.dept, data: r.data, levels: await levelsOf(r.id) });
     if (dept) return res.json({ scope: 'dept', dept, ...Dash.department(items) });
     const kinds = LIST[u.role].filter(k => k !== 'staff'), rows = await store.listOf(kinds, null), leaders = [];
     for (const a of (await store.listAccounts()).filter(a => a.active && kinds.includes(a.role)).sort((x, y) => C.KINDS.indexOf(x.role) - C.KINDS.indexOf(y.role))) {
       const mine = rows.filter(r => r.kind === a.role && String(r.owner).toLowerCase() === a.username.toLowerCase());
-      for (const r of mine.length ? mine : [null]) { const open = !!r && Auth.can(u, 'view', r);
+      for (const r of mine.length ? mine : [null]) { const open = !!r && r.status !== 'draft' && Auth.can(u, 'view', r);
         leaders.push({ role: C.ROLES[a.role], name: a.name, username: a.username, dept: a.dept || '', term: r ? r.term : '', status: r ? r.status : 'not started',
           self: open ? Number(r.self_total) : null, final: open ? Number(r.final_total ?? r.self_total) : null }); }
     }
@@ -157,7 +157,7 @@ module.exports = function roles(app, h) {
     if (kind === 'staff') await syncStaff();
     const form = formOf(kind), rows = [];
     for (const r of (await store.listOf([kind], u.role === 'hod' ? u.dept : null)).filter(r => !dept || r.dept === dept)) {
-      const t = Auth.can(u, 'view', r) ? (await review(await store.byId(r.id), u)).totals : null, sw = t ? C.strengths(t.rows, form.ind) : { weak: [], strong: [] };
+      const t = r.status !== 'draft' && Auth.can(u, 'view', r) ? (await review(await store.byId(r.id), u)).totals : null, sw = t ? C.strengths(t.rows, form.ind) : { weak: [], strong: [] };
       rows.push({ code: r.owner, name: r.name || '-', designation: r.designation, status: STATUS[r.status] || r.status, self: t && t.self, final: t && t.final, weak: sw.weak, strong: sw.strong });
     }
     const done = rows.filter(x => x.self != null), avg = f => (done.length ? String(Math.round(done.reduce((s, x) => s + f(x), 0) / done.length * 10) / 10) : '-');
@@ -208,4 +208,53 @@ module.exports = function roles(app, h) {
     }));
   }
   app.get('/api/review/:aid/log', who, target, wrap(async (req, res) => res.json(await store.auditOf(req.row.id))));
+  // the Super Admin reopens a submitted form of a HoD, Vice Principal, Principal or officer so that its owner can correct it (the review marks
+  // stay; it is reviewed again once submitted). Staff forms belong to the staff site and are reopened there.
+  app.post('/api/review/:aid/reopen', who, target, wrap(async (req, res) => {
+    const row = req.row;
+    if (req.user.role !== 'admin') return res.status(403).json({ error: 'Only the Super Admin can reopen a form.' });
+    if (row.kind === 'staff') return res.status(400).json({ error: 'Staff forms are reopened on the staff site (node unlock.js <faculty code> there).' });
+    if (row.status === 'draft') return res.status(409).json({ error: 'This form is not submitted.' });
+    const { submitted, ...data } = row.data;
+    await store.save(row, data); await store.audit(req.user.username, 'reopen', row.id, 'Reopened for the owner to correct');
+    res.json(await review(await store.byId(row.id), req.user));
+  }));
+
+  // ================= logins, managed by the Super Admin on the site (the same rules as accounts.js)
+  const admin = (req, res, next) => (req.user.role === 'admin' ? next() : res.status(403).json({ error: 'Only the Super Admin manages the logins.' }));
+  const USER_RE = /^[A-Za-z0-9._-]{3,40}$/, pwOk = p => typeof p === 'string' && p.length >= 8 && p.length <= 100;
+  const PW_RULE = 'The one-time password must have 8 to 100 characters.';
+  app.get('/api/admin/logins', who, admin, wrap(async (req, res) => res.json((await store.listAccounts()).map(a => ({ username: a.username, name: a.name, role: a.role,
+    roleName: C.ROLES[a.role], dept: a.dept || '', active: !!a.active, oneTime: !!a.must_change })))));
+  // a new login with a one-time password: its owner chooses their own at the first login
+  app.post('/api/admin/logins', who, admin, wrap(async (req, res) => {
+    const b = req.body || {}, role = String(b.role || ''), dept = role === 'hod' ? C.deptOf(b.dept) : null, username = str(b.username, 40), name = str(b.name, 100);
+    if (!C.ROLES[role]) return res.status(400).json({ error: 'Choose the role.' });
+    if (role === 'hod' && !dept) return res.status(400).json({ error: 'Choose the department of the HoD.' });
+    if (!USER_RE.test(username)) return res.status(400).json({ error: 'The username must have 3 to 40 letters, numbers, dots, dashes or underscores.' });
+    if (!name) return res.status(400).json({ error: 'Type the full name.' });
+    if (!pwOk(b.password)) return res.status(400).json({ error: PW_RULE });
+    if (await store.findAccount(username)) return res.status(409).json({ error: `The username "${username}" already exists.` });
+    const other = role === 'hod' && await store.activeHod(dept);
+    if (other) return res.status(409).json({ error: `${dept} already has an active HoD login (${other.username}). Disable it first.` });
+    await store.addAccount({ username, name, role, dept, passwordHash: await Auth.hash(b.password) });
+    await store.audit(req.user.username, 'account added', null, `${username}: ${C.ROLES[role]}${dept ? ' ' + dept : ''}`);
+    res.json({ ok: true });
+  }));
+  // a forgotten password: a new one-time password (and the lock after wrong passwords is lifted)
+  app.post('/api/admin/logins/:username/password', who, admin, wrap(async (req, res) => {
+    const a = await store.findAccount(req.params.username); if (!a) return res.status(404).json({ error: 'No such login.' });
+    if (!pwOk((req.body || {}).password)) return res.status(400).json({ error: PW_RULE });
+    await store.setPassword(a.username, await Auth.hash(req.body.password), true); Auth.forgive(a.username);
+    await store.audit(req.user.username, 'account reset', null, a.username);
+    res.json({ ok: true });
+  }));
+  app.post('/api/admin/logins/:username/active', who, admin, wrap(async (req, res) => {
+    const a = await store.findAccount(req.params.username), on = (req.body || {}).active === true; if (!a) return res.status(404).json({ error: 'No such login.' });
+    if (!on && a.username.toLowerCase() === req.user.username.toLowerCase()) return res.status(400).json({ error: 'You cannot disable your own login.' });
+    const other = on && a.role === 'hod' && await store.activeHod(a.dept);
+    if (other && other.username !== a.username) return res.status(409).json({ error: `${a.dept} already has an active HoD login (${other.username}). Disable it first.` });
+    await store.setActive(a.username, on); await store.audit(req.user.username, on ? 'account enabled' : 'account disabled', null, a.username);
+    res.json({ ok: true });
+  }));
 };

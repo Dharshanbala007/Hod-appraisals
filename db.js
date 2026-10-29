@@ -81,6 +81,16 @@ const run = s => (MYSQL ? mysql().query(s) : sqlite().exec(s));
 const setup = async () => {   // safe to run again
   for (const s of SCHEMA) await run(s);
   try { await run(`ALTER TABLE accounts ADD COLUMN must_change ${MYSQL ? 'TINYINT(1)' : 'INTEGER'} NOT NULL DEFAULT 0`); } catch { /* already there (tables made before the one-time passwords) */ }
+  // a role added since the accounts table was made (the Super Admin): MySQL widens its list; SQLite cannot change a CHECK, so the table is
+  // rebuilt with every login kept
+  if (MYSQL) await run(`ALTER TABLE accounts MODIFY role ENUM(${list(ROLES)}) NOT NULL`);
+  else {
+    const [t] = await q("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'accounts'");
+    if (t && !ROLES.every(r => t.sql.includes(`'${r}'`))) sqlite().exec(`BEGIN; ALTER TABLE accounts RENAME TO accounts_old; ${SQLITE_SCHEMA[0]};
+      INSERT INTO accounts (id, username, name, role, dept, password_hash, active, must_change, created_at)
+        SELECT id, username, name, role, dept, password_hash, active, must_change, created_at FROM accounts_old;
+      DROP TABLE accounts_old; COMMIT;`);
+  }
 };
 
 // ---- appraisals

@@ -101,7 +101,9 @@ assert.ok(!JSON.stringify(C.IND).includes('claimed only in'));                  
   assert.ok(A.can(pr, 'edit', ap('vp', 'submitted')) && A.can(pr, 'finalise', ap('vp', 'submitted')) && !A.can(vp, 'view', ap('vp', 'submitted')));   // only the Principal validates the VP's form
   assert.ok(['staff', 'hod', 'vp', 'principal', 'po', 'pc', 'librarian', 'pd'].every(k => A.can(sec, 'edit', ap(k, 'finalised')) && A.can(sec, 'view', ap(k, 'submitted'))) && !A.can(sec, 'finalise', ap('staff', 'proceeded')) && !A.can(sec, 'view', ap('staff', 'draft')));
   assert.ok(['po', 'pc', 'librarian', 'pd'].every(r => !A.can(u(r), 'view', ap('staff', 'proceeded')) && !A.can(u(r), 'view', ap('hod', 'submitted'))));   // the new roles: their own appraisal only
-  assert.deepEqual(['hod', 'vp', 'principal', 'secretary', 'po', 'librarian'].map(A.levelOf), ['hod', 'vp', 'principal', 'secretary', null, null]);
+  assert.deepEqual(['hod', 'vp', 'principal', 'secretary', 'po', 'librarian', 'admin'].map(A.levelOf), ['hod', 'vp', 'principal', 'secretary', null, null, null]);
+  const adm = u('admin');                                                                                                       // the Super Admin: sees everything, drafts too, changes nothing
+  assert.ok(C.KINDS.every(k => ['draft', 'submitted', 'proceeded', 'finalised'].every(st => A.can(adm, 'view', ap(k, st)) && !A.can(adm, 'edit', ap(k, st)) && !A.can(adm, 'proceed', ap(k, st)) && !A.can(adm, 'finalise', ap(k, st)))));
   for (let i = 0; i < 5; i++) A.failed('Someone'); assert.ok(A.locked('someone')); A.forgive('SOMEONE'); assert.ok(!A.locked('someone')); }   // 5 wrong passwords lock the username
 // ---- the HoD, Vice Principal / Principal, Placement Officer, Placement Co-ordinator, Librarian and Physical Director forms (from the templates)
 { const { FORMS } = require('./public/forms.js');
@@ -185,6 +187,14 @@ const snap = () => { const out = {}; const walk = d => { for (const e of fs.read
   await authTests();
   assert.equal(fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8').replace(/\r\n/g, '\n'),
     require('child_process').execFileSync('node', ['db-setup.js', '--sql'], { cwd: __dirname, encoding: 'utf8' }));   // schema.sql = the tables db.js makes
+  { // a database made before the Super Admin (its accounts CHECK lacks 'admin', no must_change column): rebuilt on start, every login kept
+    const f = path.join(os.tmpdir(), `old-accounts-${process.pid}.sqlite`), old = new (require('node:sqlite').DatabaseSync)(f);
+    old.exec(`CREATE TABLE accounts (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT NOT NULL COLLATE NOCASE UNIQUE, name TEXT NOT NULL, role TEXT NOT NULL CHECK (role IN ('hod','vp','principal','secretary','po','pc','librarian','pd')),
+      dept TEXT NULL, password_hash TEXT NOT NULL, active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP); INSERT INTO accounts (username, name, role, dept, password_hash) VALUES ('oldhod', 'Old HoD', 'hod', 'CSE', 'kept')`); old.close();
+    const run = require('child_process').spawnSync('node', ['-e', `const db = require('./db.js'); db.setup().then(() => db.setup()).then(() => db.addAccount({ username: 'admin2', name: 'A', role: 'admin', passwordHash: 'h' }))
+      .then(() => db.listAccounts()).then(async a => { console.log(JSON.stringify([a.map(x => x.username + ':' + x.role + ':' + x.must_change), (await db.findAccount('oldhod')).password_hash])); await db.close(); })`],
+      { cwd: __dirname, env: { ...process.env, DB_HOST: '', DB_FILE: f }, encoding: 'utf8' });
+    assert.equal(run.stdout.trim(), JSON.stringify([['admin2:admin:1', 'oldhod:hod:0'], 'kept'])); for (const x of ['', '-wal', '-shm']) fs.rmSync(f + x, { force: true }); }
   await freshDb();
   let srv = await boot();
   try {
@@ -336,6 +346,36 @@ const snap = () => { const out = {}; const walk = d => { for (const e of fs.read
     assert.ok((await (await sec('/api/dashboard')).json()).leaders.some(l => l.role === 'Principal' && l.status === 'submitted'));
     assert.equal((await (await pr('/api/dashboard?d=CSE')).json()).count, 1);
     assert.equal((await lib('/api/dashboard')).status, 403); assert.equal((await j('/api/dashboard')).status, 401);
-    console.log('OK – scoring rules, logins, staff appraisals read from the staff folder (untouched), review chain, own appraisals, report PDF, dashboards');
+    // ---- the Super Admin: every list and every appraisal (drafts too), view only; dashboards; reopens a leader's form; manages the logins
+    const ad = await as('admin', 'admin@nscet'), adList = await (await ad('/api/review/list')).json(), n2 = adList.find(x => x.kind === 'staff' && x.owner === 'N2');
+    assert.ok(n2 && n2.status === 'draft' && n2.canOpen && ['staff', 'hod', 'principal', 'librarian', 'pc'].every(k => adList.some(x => x.kind === k)));   // every kind; a draft opens for the Super Admin
+    assert.equal((await ad('/api/review/' + n2.id)).status, 200); assert.equal((await hod('/api/review/' + n2.id)).status, 404);           // ... not for the HoD
+    const adT1 = await (await ad('/api/review/' + t1.id)).json(); assert.deepEqual([adT1.can.edit, adT1.can.proceed, adT1.can.finalise, adT1.level], [false, false, false, null]);
+    assert.equal((await ad('/api/review/' + t1.id, { method: 'PUT', json: { marks: { A1: { marks: '1' } } } })).status, 403); assert.equal((await ad('/api/review/' + t1.id + '/finalise', { method: 'POST' })).status, 403);
+    assert.equal((await (await ad('/api/dashboard')).json()).count, (await (await sec('/api/dashboard')).json()).count);            // drafts stay out of the statistics
+    assert.equal((await (await ad('/api/dashboard?d=CSE')).json()).count, 1);
+    // reopen: the Principal's submitted form goes back to the Principal (marks kept); not a staff form, and nobody else can
+    assert.equal((await sec(`/api/review/${prRow.id}/reopen`, { method: 'POST' })).status, 403); assert.equal((await ad(`/api/review/${t1.id}/reopen`, { method: 'POST' })).status, 400);
+    assert.equal((await pr('/api/my/year', { method: 'PUT', json: prBody })).status, 409);
+    const re = await (await ad(`/api/review/${prRow.id}/reopen`, { method: 'POST' })).json(); assert.equal(re.status, 'draft'); assert.equal(re.data.submitted, undefined);
+    assert.equal((await pr('/api/my/year', { method: 'PUT', json: prBody })).status, 200); assert.equal((await ad(`/api/review/${prRow.id}/reopen`, { method: 'POST' })).status, 409);
+    assert.match((await (await ad(`/api/review/${prRow.id}/log`)).json()).map(x => x.who + ' ' + x.action).join('\n'), /admin reopen/);   // (a draft again: closed to the Secretary)
+    assert.equal((await sec(`/api/review/${prRow.id}`)).status, 404);
+    // logins on the site: the Super Admin only, the same rules as accounts.js
+    assert.equal((await sec('/api/admin/logins')).status, 403); assert.equal((await j('/api/admin/logins')).status, 401);
+    const logins = await (await ad('/api/admin/logins')).json(); assert.ok(logins.some(a => a.username === 'pc3' && a.oneTime) && !JSON.stringify(logins).includes('scrypt'));   // no password hashes
+    const addL = b => ad('/api/admin/logins', { method: 'POST', json: { role: 'pc', username: 'pc4', name: 'Placement Co-ordinator 4', password: 'Pc4-first-1', ...b } });
+    assert.equal((await addL({ password: 'short' })).status, 400); assert.equal((await addL({ username: 'x' })).status, 400); assert.equal((await addL({ role: 'king' })).status, 400);
+    assert.equal((await addL({ role: 'hod', dept: 'CSE', username: 'hodcse3' })).status, 409);                                            // CSE has an active HoD
+    assert.equal((await addL()).status, 200); assert.equal((await addL()).status, 409);                                                    // added once; the username is taken
+    let p4 = await login('pc4', 'Pc4-first-1'); assert.equal(p4.status, 200); assert.equal((await p4.json()).mustChange, true);
+    assert.equal((await ad('/api/admin/logins/pc4/password', { method: 'POST', json: { password: 'Pc4-second-2' } })).status, 200);
+    assert.equal((await login('pc4', 'Pc4-first-1')).status, 401); assert.equal((await login('pc4', 'Pc4-second-2')).status, 200);       // a new one-time password
+    assert.equal((await ad('/api/admin/logins/pc4/active', { method: 'POST', json: { active: false } })).status, 200); assert.equal((await login('pc4', 'Pc4-second-2')).status, 401);
+    assert.equal((await ad('/api/admin/logins/pc4/active', { method: 'POST', json: { active: true } })).status, 200); assert.equal((await login('pc4', 'Pc4-second-2')).status, 200);
+    assert.equal((await ad('/api/admin/logins/admin/active', { method: 'POST', json: { active: false } })).status, 400);                  // not your own login
+    assert.equal((await ad('/api/admin/logins/hodcse/active', { method: 'POST', json: { active: true } })).status, 409);                   // CSE already has hodcse2
+    assert.equal((await ad('/api/admin/logins/nobody/password', { method: 'POST', json: { password: 'Whatever-123' } })).status, 404);
+    console.log('OK – scoring rules, logins, staff appraisals read from the staff folder (untouched), review chain, own appraisals, report PDF, dashboards, Super Admin');
   } finally { srv.kill(); fs.rmSync(tmp, { recursive: true, force: true }); fs.rmSync(staffDir, { recursive: true, force: true }); await dropDb().catch(e => console.error('could not drop the test database:', e.message)); }
 })().catch(e => { console.error(e); process.exit(1); });

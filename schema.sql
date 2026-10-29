@@ -9,7 +9,7 @@
 --   audit_log     who did what and when (logins, marks changed, Proceed, Finalise, submissions)
 
 CREATE TABLE IF NOT EXISTS accounts (id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY, username VARCHAR(40) NOT NULL, name VARCHAR(100) NOT NULL,
-  role ENUM('hod', 'vp', 'principal', 'secretary', 'po', 'pc', 'librarian', 'pd') NOT NULL, dept VARCHAR(10) NULL, password_hash VARCHAR(255) NOT NULL, active TINYINT(1) NOT NULL DEFAULT 1, must_change TINYINT(1) NOT NULL DEFAULT 0,
+  role ENUM('hod', 'vp', 'principal', 'secretary', 'po', 'pc', 'librarian', 'pd', 'admin') NOT NULL, dept VARCHAR(10) NULL, password_hash VARCHAR(255) NOT NULL, active TINYINT(1) NOT NULL DEFAULT 1, must_change TINYINT(1) NOT NULL DEFAULT 0,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, UNIQUE KEY username (username)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS appraisals (id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY, kind ENUM('staff', 'hod', 'vp', 'principal', 'po', 'pc', 'librarian', 'pd') NOT NULL, owner VARCHAR(40) NOT NULL,

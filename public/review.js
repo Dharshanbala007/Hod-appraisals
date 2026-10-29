@@ -74,18 +74,20 @@ function passwordPage(forced) {
 const TABS = () => [
   FM[ME.role] && ['my', 'My appraisal'],
   ME.role === 'hod' && ['dept', 'My department'],
-  ['vp', 'principal', 'secretary'].includes(ME.role) && ['depts', 'Departments'],
-  ['vp', 'principal', 'secretary'].includes(ME.role) && ['support', 'Placement, Library & Sports'],
-  ['principal', 'secretary'].includes(ME.role) && ['vpf', 'Vice Principal'],
-  ME.role === 'secretary' && ['prf', 'Principal'],
-  ['hod', 'vp', 'principal', 'secretary'].includes(ME.role) && ['dash', 'Dashboard'],
+  ['vp', 'principal', 'secretary', 'admin'].includes(ME.role) && ['depts', 'Departments'],
+  ['vp', 'principal', 'secretary', 'admin'].includes(ME.role) && ['support', 'Placement, Library & Sports'],
+  ['principal', 'secretary', 'admin'].includes(ME.role) && ['vpf', 'Vice Principal'],
+  ['secretary', 'admin'].includes(ME.role) && ['prf', 'Principal'],
+  ['hod', 'vp', 'principal', 'secretary', 'admin'].includes(ME.role) && ['dash', 'Dashboard'],
+  ME.role === 'admin' && ['logins', 'Logins'],
 ].filter(Boolean);
 async function home(tab, dept) {
   const tabs = TABS(); if (!tabs.some(t => t[0] === tab)) tab = tabs[0][0];
-  const body = tab === 'my' ? await myTab() : tab === 'dash' ? await dashTab(dept) : listTab(tab, await api('/api/review/list'), dept);
+  const body = tab === 'my' ? await myTab() : tab === 'dash' ? await dashTab(dept) : tab === 'logins' ? await loginsTab() : listTab(tab, await api('/api/review/list'), dept);
   LAST = location.hash || '#';
   app.onclick = app.oninput = app.onchange = null;
   app.innerHTML = userline() + `<nav class="tabs">${tabs.map(([id, l]) => `<a href="#t=${id}" class="${id === tab ? 'on' : ''}">${esc(l)}</a>`).join('')}</nav>` + body;
+  if (tab === 'logins') loginsWire();
   if (tab === 'dash') app.onchange = e => { if (e.target.matches('[data-dash]')) go('#t=dash' + (e.target.value ? '&d=' + encodeURIComponent(e.target.value) : '')); };
 }
 async function myTab() {
@@ -120,7 +122,7 @@ function listTab(tab, list, dept) {
 async function reportPage(kind, dept) {
   if (!C.KINDS.includes(kind)) throw new Error('No such report.');
   const list = (await api('/api/review/list')).filter(r => r.kind === kind && (!dept || r.dept === dept)), form = formOf(kind);
-  const full = await Promise.all(list.map(r => (r.canOpen ? api('/api/review/' + r.id) : null)));
+  const full = await Promise.all(list.map(r => (r.canOpen && r.status !== 'draft' ? api('/api/review/' + r.id) : null)));   // drafts: not submitted yet
   const secs = xs => (xs.length ? xs.map(x => `<div><b>${x.code}</b> ${esc(x.title)} <span class="mute">${r1(x.marks)}/${x.max}</span></div>`).join('') : '<span class="mute">–</span>');
   const done = full.filter(Boolean), avg = f => (done.length ? r1(done.reduce((s, d) => s + f(d.totals), 0) / done.length) : '–');
   const title = (kind === 'staff' ? 'Staff' : C.ROLES[kind]) + (dept ? ' – ' + dept : '');
@@ -209,6 +211,47 @@ function collegeDash(D) {
     ${card('HoD, Vice Principal, Principal and officer appraisals', stages(D.leaders) + `<div class="scroll" style="margin-top:12px"><table><tr><th>Role</th><th>Name</th><th>Department</th><th>Status</th><th>Self</th><th>Final</th></tr>${D.leaders.map(x => `<tr><td>${esc(x.role)}</td><td>${esc(x.name)} <span class="mute">${esc(x.username)}</span></td><td>${esc(x.dept || '–')}</td><td>${badge(x.status)}</td><td>${x.self ?? '–'}</td><td>${x.final ?? '–'}</td></tr>`).join('')}</table></div>`)}`;
 }
 
+/* ---------- logins (Super Admin): add a login, give a new one-time password, disable / enable ---------- */
+async function loginsTab() {
+  const L = await api('/api/admin/logins');
+  const state = a => (!a.active ? '<span class="badge st-draft">Disabled</span>' : a.oneTime ? '<span class="badge">One-time password not changed yet</span>' : '<span class="badge st-submitted">Active</span>');
+  return card('Add a login', `<form id="addlogin"><div class="grid" style="margin-top:4px">
+      <div><label for="nl-role">Role</label><select id="nl-role" required><option value="">Select…</option>${Object.entries(C.ROLES).map(([k, l]) => `<option value="${k}">${esc(l)}</option>`).join('')}</select></div>
+      <div><label for="nl-dept">Department (HoD only)</label><select id="nl-dept"><option value="">–</option>${C.DEPARTMENTS.map(d => `<option>${esc(d)}</option>`).join('')}</select></div>
+      <div><label for="nl-user">Username</label><input id="nl-user" required maxlength="40" autocomplete="off" placeholder="e.g. pc4"></div>
+      <div><label for="nl-name">Full name</label><input id="nl-name" required maxlength="100"></div>
+      <div><label for="nl-pw">One-time password</label><input id="nl-pw" required minlength="8" maxlength="100" autocomplete="off"></div></div>
+      <p class="mute" style="margin-top:8px">The owner logs in with the username and this one-time password, then chooses their own password.</p>
+      <p class="warn" id="nl-err"></p><div class="actions"><button>Add login</button></div></form>`)
+    + card(`All logins (${L.length})`, `<div class="scroll"><table><tr><th>Username</th><th>Name</th><th>Role</th><th>Department</th><th>Status</th><th></th></tr>
+      ${L.map(a => `<tr><td><b>${esc(a.username)}</b></td><td>${esc(a.name)}</td><td>${esc(a.roleName)}</td><td>${esc(a.dept || '–')}</td><td>${state(a)}</td>
+        <td><span class="actions"><button class="alt" data-reset="${esc(a.username)}">New password</button>${a.username === ME.username ? ''
+          : `<button class="alt" data-active="${esc(a.username)}" data-on="${a.active ? '' : '1'}">${a.active ? 'Disable' : 'Enable'}</button>`}</span></td></tr>`).join('')}</table></div>`);
+}
+function loginsWire() {
+  $('#addlogin').onsubmit = async e => {
+    e.preventDefault();
+    try {
+      await api('/api/admin/logins', { method: 'POST', body: { role: $('#nl-role').value, dept: $('#nl-dept').value, username: $('#nl-user').value.trim(), name: $('#nl-name').value.trim(), password: $('#nl-pw').value } });
+      alert('Login added. Give its owner the username and the one-time password.'); route();
+    } catch (x) { $('#nl-err').textContent = x.message; }
+  };
+  app.onclick = async e => {
+    const b = e.target.closest('[data-reset], [data-active]'); if (!b) return;
+    try {
+      if (b.dataset.reset) {
+        const pw = prompt(`New one-time password for ${b.dataset.reset} (8 to 100 characters).\nThey choose their own password at the next login.`); if (!pw) return;
+        await api(`/api/admin/logins/${encodeURIComponent(b.dataset.reset)}/password`, { method: 'POST', body: { password: pw } });
+        alert(`Done. Give ${b.dataset.reset} the new one-time password.`);
+      } else {
+        const on = !!b.dataset.on; if (!confirm(`${on ? 'Enable' : 'Disable'} the login "${b.dataset.active}"?${on ? '' : '\n\nIt stops working at once, also on a page already open.'}`)) return;
+        await api(`/api/admin/logins/${encodeURIComponent(b.dataset.active)}/active`, { method: 'POST', body: { active: on } });
+      }
+      route();
+    } catch (x) { fail(x); }
+  };
+}
+
 /* ---------- review of an appraisal ---------- */
 let R, LOG = [];
 async function openReview(id) {
@@ -221,6 +264,7 @@ function renderReview() {
   const f = formOf(R.kind), d = R.data, t = R.totals, dv = R.deviation, mine = R.can.edit ? R.level : null, ml = R.levels[mine] || { ind: {} };
   const refs = C.proofs(d, f.ind), refOf = new Map(refs.map(p => [p.e, p.ref])), fileUrl = s => `/api/review/${R.id}/file/${encodeURIComponent(s)}`;
   const why = R.can.edit ? `You are reviewing as <b>${LV[mine]}</b>. Type a mark only where you change it and write why in the remark box beside it; an empty box means no change at your level.`
+    : ME.role === 'admin' ? 'Super Admin: view only – the marks are changed by the reviewers.' + (R.status === 'draft' ? ' This form is still being filled by its owner.' : '')
     : R.status === 'finalised' ? 'Finalised – view only. Only the Secretary can still change marks.'
     : R.kind === 'staff' && R.status === 'submitted' ? 'Waiting for the HoD to proceed – view only for now.'
     : R.kind === 'staff' && ME.role === 'hod' ? 'You have proceeded this appraisal – view only now.' : 'View only.';
@@ -256,7 +300,7 @@ function renderReview() {
     : '<p class="mute">No marks changed yet: the final total is the self total.</p>';
   app.innerHTML = userline() + `<div class="bar"><button class="alt" data-back>← Back</button><b>${esc(R.name)}</b><span class="mute">${esc(R.owner)} · ${esc(R.kindName)}${R.dept ? ' · ' + esc(R.dept) : ''} · ${esc(TERM[R.term])}</span>${badge(R.status)}
       <div class="sp"><span>Self <b>${r1(t.self)}</b> → Final <b>${r1(t.final)}</b> <span class="${cls(t.final - t.self)}">(${chg(t.final - t.self)})</span></span>
-      ${mine ? '<span class="mute" id="saved">No changes</span><button id="save">Save</button>' : ''}${R.can.proceed ? '<button class="alt" id="proceed">Proceed</button>' : ''}${R.can.finalise ? '<button class="alt" id="finalise">Finalise</button>' : ''}</div></div>
+      ${mine ? '<span class="mute" id="saved">No changes</span><button id="save">Save</button>' : ''}${R.can.proceed ? '<button class="alt" id="proceed">Proceed</button>' : ''}${R.can.finalise ? '<button class="alt" id="finalise">Finalise</button>' : ''}${ME.role === 'admin' && R.kind !== 'staff' && R.status !== 'draft' ? '<button class="alt" id="reopen">Reopen for correction</button>' : ''}</div></div>
     <div class="note">${why}</div>
     ${card('Deviation – marks changed by reviewers', devHtml, 'deviation')}
     ${card('Score summary', `<table><tr><th>Domain</th><th>Max</th><th>Self</th><th>Final</th></tr>${Object.keys(f.domains).map(k => `<tr><td>${k}. ${esc(f.domains[k])}</td><td>${t.dom[k].max}</td><td>${r1(t.dom[k].self)}</td><td>${r1(t.dom[k].final)}</td></tr>`).join('')}
@@ -292,7 +336,8 @@ async function saveReview() {
   renderReview(); scrollTo(0, y); $('#saved').textContent = 'Saved ' + new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 async function act(kind) {
-  if (!confirm(kind === 'proceed' ? 'Proceed this appraisal to the Vice Principal / Principal?\n\nAfter you proceed, your marks are locked and you can only view it.'
+  if (!confirm(kind === 'reopen' ? 'Reopen this form so its owner can correct it?\n\nIt goes back to "being filled"; the review marks are kept, and it is reviewed again after the owner submits it.'
+    : kind === 'proceed' ? 'Proceed this appraisal to the Vice Principal / Principal?\n\nAfter you proceed, your marks are locked and you can only view it.'
     : 'Finalise this appraisal?\n\nAfter you finalise, it is locked for the HoD, Vice Principal and Principal. Only the Secretary can still change marks.')) return;
   if (DIRTY) await saveReview();
   R = await api(`/api/review/${R.id}/${kind}`, { method: 'POST' }); LOG = await api(`/api/review/${R.id}/log`).catch(() => LOG); DIRTY = false;
@@ -303,7 +348,7 @@ function reviewClick(e) {
   if (el.dataset.goto) { e.preventDefault(); document.getElementById(el.dataset.goto)?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
   else if ('back' in el.dataset) { if (!DIRTY || confirm('Your changes are not saved. Leave anyway?')) { DIRTY = false; go(LAST); } }
   else if (el.id === 'save' || el.id === 'save2') saveReview().catch(fail);
-  else if (el.id === 'proceed' || el.id === 'finalise') act(el.id).catch(fail);
+  else if (el.id === 'proceed' || el.id === 'finalise' || el.id === 'reopen') act(el.id).catch(fail);
 }
 
 /* ---------- own appraisal (HoD, Vice Principal, Principal, Placement Officer, Placement Co-ordinator, Librarian, Physical Director) ---------- */

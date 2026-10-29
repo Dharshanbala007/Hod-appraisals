@@ -307,7 +307,7 @@
   // as { ind: { A1: { marks, remark } }, overall: 'remark' }; the latest level that set a section's mark decides its final mark.
   const LEVELS = ['hod', 'vp', 'principal', 'secretary'];
   // the logins (staff have none) and the kinds of appraisal; each role except the Secretary fills an appraisal of its own kind
-  const ROLES = { hod: 'HoD', vp: 'Vice Principal', principal: 'Principal', secretary: 'Secretary', po: 'Placement Officer', pc: 'Placement Co-ordinator', librarian: 'Librarian', pd: 'Physical Director' };
+  const ROLES = { hod: 'HoD', vp: 'Vice Principal', principal: 'Principal', secretary: 'Secretary', po: 'Placement Officer', pc: 'Placement Co-ordinator', librarian: 'Librarian', pd: 'Physical Director', admin: 'Super Admin' };
   const KINDS = ['staff', 'hod', 'vp', 'principal', 'po', 'pc', 'librarian', 'pd'];
   const markOf = (data, lv, ind) => { const m = ((((data || {})[lv] || {}).ind || {})[ind.code] || {}).marks; return m === '' || m == null || isNaN(+m) ? null : Math.min(Math.max(+m, 0), ind.max); };
   // rows[code] = { self, hod, principal, secretary, final }; after = the total after each level (after.hod = total once the HoD's marks count)
