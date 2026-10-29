@@ -146,3 +146,4 @@ svg.cols .cv { font-size:13px; font-weight:600; text-anchor:middle; fill:#0a0a0a
 .stack { display:flex; height:16px; border-radius:8px; overflow:hidden; gap:2px; background:var(--card) } .stack i { display:block; height:100% }
 .legend { display:flex; flex-wrap:wrap; gap:6px 16px; font-size:13px; margin-top:8px } .legend .swatch { margin-left:0 }
 .refkey { display:inline-block; width:22px; border-top:2px dashed #52514e; vertical-align:middle; margin-right:6px }
+button.danger { color:#b42318 } button.danger:hover { background:#fef3f2; border-color:#f3c2bd }

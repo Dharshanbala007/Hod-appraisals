@@ -22,7 +22,7 @@ module.exports = function roles(app, h) {
       try { data = JSON.parse(await fsp.readFile(path.join(STAFF, folder, 'form.json'), 'utf8')); } catch { continue; }
       const row = have.get(code.toLowerCase());
       if (!row) await store.create({ kind: 'staff', owner: code, year: C.YEAR, folder, data });
-      else if (row.folder !== folder || JSON.stringify(row.data) !== JSON.stringify(data)) await store.save(row, data, folder);
+      else if (!row.removed && (row.folder !== folder || JSON.stringify(row.data) !== JSON.stringify(data))) await store.save(row, data, folder);   // a deleted one stays deleted
     }
   }
   const who = wrap(async (req, res, next) => {
@@ -131,7 +131,7 @@ module.exports = function roles(app, h) {
   }
   const target = wrap(async (req, res, next) => {
     const row = await store.byId(Number(req.params.aid) || 0);
-    if (!row || !Auth.can(req.user, 'view', row)) return res.status(404).json({ error: 'Appraisal not found, or not yours to see.' });
+    if (!row || row.removed || !Auth.can(req.user, 'view', row)) return res.status(404).json({ error: 'Appraisal not found, or not yours to see.' });
     req.row = row; next();
   });
   app.get('/api/review/list', who, wrap(async (req, res) => {
@@ -150,7 +150,7 @@ module.exports = function roles(app, h) {
     const dept = u.role === 'hod' ? u.dept : C.DEPARTMENTS.includes(req.query.d) ? req.query.d : '';
     await syncStaff();
     const items = [];
-    for (const r of await store.all('staff')) if ((!dept || r.dept === dept) && r.status !== 'draft' && Auth.can(u, 'view', r))   // submitted ones only (the Super Admin can open drafts too)
+    for (const r of await store.all('staff')) if ((!dept || r.dept === dept) && r.status !== 'draft' && !r.removed && Auth.can(u, 'view', r))   // submitted ones only (the Super Admin can open drafts too)
       items.push({ code: r.owner, name: r.name, designation: (r.data.p1 || {}).designation || '', dept: r.dept, data: r.data, levels: await levelsOf(r.id) });
     if (dept) return res.json({ scope: 'dept', dept, ...Dash.department(items) });
     const kinds = LIST[u.role].filter(k => k !== 'staff'), rows = await store.listOf(kinds, null), leaders = [];
@@ -229,6 +229,30 @@ module.exports = function roles(app, h) {
     const { submitted, ...data } = row.data;
     await store.save(row, data); await store.audit(req.user.username, 'reopen', row.id, 'Reopened for the owner to correct');
     res.json(await review(await store.byId(row.id), req.user));
+  }));
+
+  // the Super Admin deletes an appraisal (a duplicate, a test entry): it is gone from every list, report and dashboard of every login.
+  // A staff appraisal is only marked deleted here (the staff site's folder is never touched) and can be restored; any other appraisal is taken
+  // out with its marks, its content and files put aside in UPLOADS/_removed, and its owner can start a new one.
+  app.post('/api/review/:aid/delete', who, target, wrap(async (req, res) => {
+    const row = req.row, u = req.user, what = `${row.kind === 'staff' ? 'Staff' : C.ROLES[row.kind]} ${row.owner}${row.name ? ' (' + row.name + ')' : ''}`;
+    if (u.role !== 'admin') return res.status(403).json({ error: 'Only the Super Admin can delete an appraisal.' });
+    if (row.kind === 'staff') await store.setRemoved(row.id, u.username);
+    else {
+      const dest = path.join(ROOT, '_removed', new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-'), `${row.kind} ${safeName(row.owner)} deleted`), dir = within(path.join(ROOT, row.folder));
+      await fsp.mkdir(dest, { recursive: true }); await fsp.writeFile(path.join(dest, 'form.json'), JSON.stringify(row.data, null, 2));
+      if (await fsp.access(dir).then(() => true, () => false)) for (const f of await filesIn(dir)) await fsp.rename(path.join(dir, f), path.join(dest, f));
+      await store.drop(row.id);
+    }
+    await store.audit(u.username, 'deleted', row.id, what);
+    res.json({ ok: true });
+  }));
+  const onlyAdmin = (req, res, next) => (req.user.role === 'admin' ? next() : res.status(403).json({ error: 'Only the Super Admin can do this.' }));
+  app.get('/api/admin/deleted', who, onlyAdmin, wrap(async (req, res) => res.json(await store.removedList())));
+  app.post('/api/admin/deleted/:aid/restore', who, onlyAdmin, wrap(async (req, res) => {
+    const row = await store.byId(Number(req.params.aid) || 0); if (!row || !row.removed) return res.status(404).json({ error: 'No such deleted appraisal.' });
+    await store.setRemoved(row.id, null); await store.audit(req.user.username, 'restored', row.id, `Staff ${row.owner}`);
+    res.json({ ok: true });
   }));
 
   // ================= logins, managed by the Super Admin on the site (the same rules as accounts.js)

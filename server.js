@@ -5,7 +5,7 @@
 const express = require('express'), multer = require('multer'), fs = require('fs'), path = require('path');
 const fsp = fs.promises;
 const { PDFDocument } = require('pdf-lib');
-const C = require('./public/config.js');
+const C = require('./public/config.js'), { FORMS } = require('./public/forms.js');
 const store = require('./db.js');
 const Auth = require('./auth.js');
 
@@ -22,7 +22,7 @@ const under = (base, p) => { const r = path.resolve(base, p); if (!r.startsWith(
 const within = p => under(ROOT, p);
 const exists = p => fsp.access(p).then(() => true, () => false);
 const isReport = n => /^Appraisal_.+\.pdf$/.test(n);
-const filesIn = async dir => (await fsp.readdir(dir)).filter(n => !n.startsWith('form.json') && !isReport(n)); // proofs only
+const filesIn = async dir => (await fsp.readdir(dir, { withFileTypes: true })).filter(d => d.isFile() && !d.name.startsWith('form.json') && !isReport(d.name)).map(d => d.name); // proofs only
 
 // One typed value, checked against its field definition in config.js.
 function cleanValue(f, raw) {
@@ -77,7 +77,13 @@ async function storeUpload(req, res, dir, inds) {
   }
   const b = isReport(base + ext) ? 'proof ' + base : base; // never clash with a report's name
   let stored = b + ext, n = 1;
-  while (await exists(path.join(dir, stored))) stored = `${b} (${++n})${ext}`;
+  while (await exists(path.join(dir, stored))) {
+    if ((await fsp.readFile(path.join(dir, stored))).equals(req.file.buffer)) {   // the same file again (e.g. chosen once more after a failed save): the copy already there
+      await fsp.utimes(path.join(dir, stored), new Date(), new Date());          // (fresh, so a save running now does not take it away as unused)
+      return res.json({ stored, name: str(req.file.originalname, 200), mime: req.file.mimetype, pages });
+    }
+    stored = `${b} (${++n})${ext}`;
+  }
   await fsp.mkdir(dir, { recursive: true });   // (a database restored on a new server may not have the folder yet)
   await fsp.writeFile(path.join(dir, stored), req.file.buffer);
   res.json({ stored, name: str(req.file.originalname, 200), mime: req.file.mimetype, pages });
@@ -136,10 +142,32 @@ app.use((err, req, res, next) => { // body-parse and upload-limit errors: friend
   console.error(err); res.status(500).json({ error: 'Something went wrong. Please try again.' });
 });
 
-if (require.main === module) store.setup().then(() => Auth.seedLogins(store)).then(   // the tables and the first logins are made on the first start (safe on every start)
-  made => {
-    if (made.length) console.log('Logins added with one-time passwords: ' + made.join(', '));
-    app.listen(process.env.PORT || 3001, () => console.log(`http://localhost:${process.env.PORT || 3001}  (files in ${ROOT}; staff appraisals read from ${STAFF}; ${store.where()})`));
-  },
-  e => { console.error('Could not open the database:', e.message); process.exit(1); });
+// What is no longer used is put aside in UPLOADS/_removed/<date and time>/, never deleted: the forms folded away for one form per person and
+// year (their content as form.json and their files), and proof files that no form refers to any more (e.g. a second copy of the same proof).
+async function tidy() {
+  const aside = path.join(ROOT, '_removed', new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')), kinds = Object.keys(FORMS).filter(k => FORMS[k].period !== 'semester');
+  const move = async (from, to) => { await fsp.mkdir(path.dirname(to), { recursive: true }); await fsp.rename(from, to); };
+  let forms = 0, files = 0;
+  for (const r of await store.oneFormPerYear(kinds)) {
+    const dest = path.join(aside, `${r.kind} ${safeName(r.owner)} ${r.term || 'year'}`), dir = within(path.join(ROOT, r.folder));
+    await fsp.mkdir(dest, { recursive: true }); await fsp.writeFile(path.join(dest, 'form.json'), JSON.stringify(r.data, null, 2));
+    if (await exists(dir)) for (const f of await filesIn(dir)) await move(path.join(dir, f), path.join(dest, f));
+    forms++;
+  }
+  for (const k of kinds) for (const r of await store.all(k)) {
+    const dir = within(path.join(ROOT, r.folder)); if (!(await exists(dir))) continue;
+    const used = new Set(Object.values(r.data.ind || {}).flatMap(d => (d.rows || []).filter(x => x.file).map(x => x.file.stored)));
+    for (const f of await filesIn(dir)) if (!used.has(f)) { await move(path.join(dir, f), path.join(aside, 'unused files', r.folder, f)); files++; }
+  }
+  return { forms, files };
+}
+
+// the tables, the first logins and the tidy-up on every start (each safe to repeat)
+if (require.main === module) (async () => {
+  await store.setup();
+  const made = await Auth.seedLogins(store), put = await tidy();
+  if (made.length) console.log('Logins added with one-time passwords: ' + made.join(', '));
+  if (put.forms || put.files) console.log(`Put aside in UPLOADS/_removed: ${put.forms} extra form(s), ${put.files} unused file(s)`);
+  app.listen(process.env.PORT || 3001, () => console.log(`http://localhost:${process.env.PORT || 3001}  (files in ${ROOT}; staff appraisals read from ${STAFF}; ${store.where()})`));
+})().catch(e => { console.error('Could not start:', e.message); process.exit(1); });
 module.exports = { app };

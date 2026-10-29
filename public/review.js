@@ -88,6 +88,7 @@ async function home(tab, dept) {
   app.onclick = app.oninput = app.onchange = null;
   app.innerHTML = userline() + `<nav class="tabs">${tabs.map(([id, l]) => `<a href="#t=${id}" class="${id === tab ? 'on' : ''}">${esc(l)}</a>`).join('')}</nav>` + body;
   if (tab === 'logins') loginsWire();
+  else if (ME.role === 'admin' && !['my', 'dash'].includes(tab)) app.onclick = e => { const b = e.target.closest('[data-del]'); if (b) deleteAppraisal(b).then(ok => ok && route()).catch(fail); };
   if (tab === 'dash') app.onchange = e => { if (e.target.matches('[data-dash]')) go('#t=dash' + (e.target.value ? '&d=' + encodeURIComponent(e.target.value) : '')); };
 }
 async function myTab() {
@@ -97,11 +98,20 @@ async function myTab() {
     <table style="margin-top:12px"><tr><th>Form</th><th>Status</th><th>Self total</th><th></th></tr>${my.items.map(x => `<tr><td>${esc(x.term === 'year' ? `Academic year ${C.YEAR_FULL} appraisal form` : TERM[x.term])}</td><td>${badge(x.status)}</td><td>${x.self ?? '–'}</td>
       <td><button class="alt" data-go="#m=${x.term}">${x.status === 'not started' ? 'Start' : x.status === 'draft' ? 'Continue' : 'View'}</button></td></tr>`).join('')}</table>`);
 }
+// the Super Admin's Delete (a duplicate or test entry): gone from every list, report and dashboard of every login
+const delBtn = x => `<button class="alt danger" data-del="${x.id}" data-kind="${esc(x.kind)}" data-what="${esc(x.owner + (x.name ? ' – ' + x.name : ''))}">Delete</button>`;
+async function deleteAppraisal(b) {
+  const staff = b.dataset.kind === 'staff', what = b.dataset.what;
+  if (!confirm(staff ? `Delete the staff appraisal of ${what}?\n\nIt disappears from every list, report and dashboard, for every login. The staff site's files are not touched, and you can restore it from Logins → Deleted staff forms.`
+    : `Delete the appraisal of ${what}?\n\nIt is removed with its review marks from every list, report and dashboard. Its content and files are kept on the server in UPLOADS/_removed, and its owner can start a new form.`)) return false;
+  await api(`/api/review/${b.dataset.del}/delete`, { method: 'POST' });
+  return true;
+}
 const listTable = rows => (rows.length ? `<div class="scroll"><table><tr><th>Code</th><th>Name</th><th>Period</th><th>Status</th><th>Self</th><th>Final</th><th>Change</th><th></th></tr>${rows.map(r => {
   const open = r.status !== 'draft';
   return `<tr><td>${esc(r.owner)}</td><td>${esc(r.name || '–')}${r.designation ? `<div class="mute">${esc(r.designation)}</div>` : ''}</td><td>${esc(TERM[r.term])}</td><td>${badge(r.status)}</td>
     <td>${open ? r.self ?? '–' : '–'}</td><td>${open ? r.final ?? '–' : '–'}</td><td class="${open ? cls(r.final - r.self) : ''}">${open && r.self != null ? chg(r.final - r.self) : ''}</td>
-    <td>${r.canOpen ? `<button class="alt" data-go="#r=${r.id}">Open</button>` : '<span class="mute">Not submitted yet</span>'}</td></tr>`;
+    <td><span class="actions">${r.canOpen ? `<button class="alt" data-go="#r=${r.id}">Open</button>` : '<span class="mute">Not submitted yet</span>'}${ME.role === 'admin' ? delBtn(r) : ''}</span></td></tr>`;
 }).join('')}</table></div>` : '<p class="mute">No appraisals here yet.</p>');
 // a list with its Report button (the report covers the same appraisals: one kind, one department or all)
 const listCard = (title, rows, kind, dept = '') => `<div class="card"><div class="sechead"><h3>${esc(title)}</h3>${rows.length
@@ -213,7 +223,7 @@ function collegeDash(D) {
 
 /* ---------- logins (Super Admin): add a login, give a new one-time password, disable / enable ---------- */
 async function loginsTab() {
-  const L = await api('/api/admin/logins');
+  const L = await api('/api/admin/logins'), gone = await api('/api/admin/deleted');
   const state = a => (!a.active ? '<span class="badge st-draft">Disabled</span>' : a.oneTime ? '<span class="badge">One-time password not changed yet</span>' : '<span class="badge st-submitted">Active</span>');
   return card('Add a login', `<form id="addlogin"><div class="grid" style="margin-top:4px">
       <div><label for="nl-role">Role</label><select id="nl-role" required><option value="">Select…</option>${Object.entries(C.ROLES).map(([k, l]) => `<option value="${k}">${esc(l)}</option>`).join('')}</select></div>
@@ -226,7 +236,10 @@ async function loginsTab() {
     + card(`All logins (${L.length})`, `<div class="scroll"><table><tr><th>Username</th><th>Name</th><th>Role</th><th>Department</th><th>Status</th><th></th></tr>
       ${L.map(a => `<tr><td><b>${esc(a.username)}</b></td><td>${esc(a.name)}</td><td>${esc(a.roleName)}</td><td>${esc(a.dept || '–')}</td><td>${state(a)}</td>
         <td><span class="actions"><button class="alt" data-reset="${esc(a.username)}">New password</button>${a.username === ME.username ? ''
-          : `<button class="alt" data-active="${esc(a.username)}" data-on="${a.active ? '' : '1'}">${a.active ? 'Disable' : 'Enable'}</button>`}</span></td></tr>`).join('')}</table></div>`);
+          : `<button class="alt" data-active="${esc(a.username)}" data-on="${a.active ? '' : '1'}">${a.active ? 'Disable' : 'Enable'}</button>`}</span></td></tr>`).join('')}</table></div>`)
+    + card(`Deleted staff forms (${gone.length})`, gone.length ? `<p class="sub">Hidden from every list, report and dashboard. The staff site still has their files; Restore brings one back.</p><div class="scroll" style="margin-top:8px"><table><tr><th>Code</th><th>Name</th><th>Department</th><th>Deleted</th><th></th></tr>
+      ${gone.map(g => `<tr><td>${esc(g.owner)}</td><td>${esc(g.name || '–')}${g.designation ? `<div class="mute">${esc(g.designation)}</div>` : ''}</td><td>${esc(g.dept || '–')}</td><td>${esc(at(g.removed_at))} <span class="mute">by ${esc(g.removed_by)}</span></td><td><button class="alt" data-restore="${g.id}">Restore</button></td></tr>`).join('')}</table></div>`
+      : '<p class="mute">None deleted.</p>');
 }
 function loginsWire() {
   $('#addlogin').onsubmit = async e => {
@@ -237,9 +250,10 @@ function loginsWire() {
     } catch (x) { $('#nl-err').textContent = x.message; }
   };
   app.onclick = async e => {
-    const b = e.target.closest('[data-reset], [data-active]'); if (!b) return;
+    const b = e.target.closest('[data-reset], [data-active], [data-restore]'); if (!b) return;
     try {
-      if (b.dataset.reset) {
+      if (b.dataset.restore) await api(`/api/admin/deleted/${b.dataset.restore}/restore`, { method: 'POST' });
+      else if (b.dataset.reset) {
         const pw = prompt(`New one-time password for ${b.dataset.reset} (8 to 100 characters).\nThey choose their own password at the next login.`); if (!pw) return;
         await api(`/api/admin/logins/${encodeURIComponent(b.dataset.reset)}/password`, { method: 'POST', body: { password: pw } });
         alert(`Done. Give ${b.dataset.reset} the new one-time password.`);
@@ -300,7 +314,7 @@ function renderReview() {
     : '<p class="mute">No marks changed yet: the final total is the self total.</p>';
   app.innerHTML = userline() + `<div class="bar"><button class="alt" data-back>← Back</button><b>${esc(R.name)}</b><span class="mute">${esc(R.owner)} · ${esc(R.kindName)}${R.dept ? ' · ' + esc(R.dept) : ''} · ${esc(TERM[R.term])}</span>${badge(R.status)}
       <div class="sp"><span>Self <b>${r1(t.self)}</b> → Final <b>${r1(t.final)}</b> <span class="${cls(t.final - t.self)}">(${chg(t.final - t.self)})</span></span>
-      ${mine ? '<span class="mute" id="saved">No changes</span><button id="save">Save</button>' : ''}${R.can.proceed ? '<button class="alt" id="proceed">Proceed</button>' : ''}${R.can.finalise ? '<button class="alt" id="finalise">Finalise</button>' : ''}${ME.role === 'admin' && R.kind !== 'staff' && R.status !== 'draft' ? '<button class="alt" id="reopen">Reopen for correction</button>' : ''}</div></div>
+      ${mine ? '<span class="mute" id="saved">No changes</span><button id="save">Save</button>' : ''}${R.can.proceed ? '<button class="alt" id="proceed">Proceed</button>' : ''}${R.can.finalise ? '<button class="alt" id="finalise">Finalise</button>' : ''}${ME.role === 'admin' && R.kind !== 'staff' && R.status !== 'draft' ? '<button class="alt" id="reopen">Reopen for correction</button>' : ''}${ME.role === 'admin' ? delBtn(R) : ''}</div></div>
     <div class="note">${why}</div>
     ${card('Deviation – marks changed by reviewers', devHtml, 'deviation')}
     ${card('Score summary', `<table><tr><th>Domain</th><th>Max</th><th>Self</th><th>Final</th></tr>${Object.keys(f.domains).map(k => `<tr><td>${k}. ${esc(f.domains[k])}</td><td>${t.dom[k].max}</td><td>${r1(t.dom[k].self)}</td><td>${r1(t.dom[k].final)}</td></tr>`).join('')}
@@ -349,6 +363,7 @@ function reviewClick(e) {
   else if ('back' in el.dataset) { if (!DIRTY || confirm('Your changes are not saved. Leave anyway?')) { DIRTY = false; go(LAST); } }
   else if (el.id === 'save' || el.id === 'save2') saveReview().catch(fail);
   else if (el.id === 'proceed' || el.id === 'finalise' || el.id === 'reopen') act(el.id).catch(fail);
+  else if ('del' in el.dataset) deleteAppraisal(el).then(ok => { if (ok) { DIRTY = false; go(LAST); } }).catch(fail);
 }
 
 /* ---------- own appraisal (HoD, Vice Principal, Principal, Placement Officer, Placement Co-ordinator, Librarian, Physical Director) ---------- */
@@ -514,12 +529,15 @@ function mineClick(ev) {
   mineRefresh(); queueMine();
 }
 function queueMine() { if (MLOCK || PREVIEW) return; pending = true; $('#saved').textContent = 'Saving…'; clearTimeout(timer); timer = setTimeout(() => saveMine().catch(() => {}), 600); }
-async function saveMine() {
-  clearTimeout(timer); const s = () => $('#saved') || {};
-  try {
-    await api(mUrl(), { method: 'PUT', body: { p1: MD.p1, ind: MD.ind, tables: MD.tables, self: MD.self, declared: MD.declared } });
-    pending = false; s().textContent = 'Saved ' + new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  } catch (e) { s().textContent = 'Not saved: ' + e.message; throw e; }
+let saving = Promise.resolve();   // one save at a time: autosave and the Save button never overlap; each sends the form as it is then
+function saveMine() {
+  clearTimeout(timer); const s = () => $('#saved') || {}, url = mUrl();
+  return saving = saving.catch(() => {}).then(async () => {
+    try {
+      await api(url, { method: 'PUT', body: { p1: MD.p1, ind: MD.ind, tables: MD.tables, self: MD.self, declared: MD.declared } });
+      pending = false; s().textContent = 'Saved ' + new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    } catch (e) { s().textContent = 'Not saved: ' + e.message; throw e; }
+  });
 }
 // Edit again (the HoD's own form): back to editable with everything saved; submitted again when done
 async function editAgain() {

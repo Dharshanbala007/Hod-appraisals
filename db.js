@@ -45,7 +45,7 @@ const MYSQL_SCHEMA = [
     year CHAR(7) NOT NULL, term VARCHAR(2) NOT NULL DEFAULT '', name VARCHAR(100) NOT NULL DEFAULT '', designation VARCHAR(100) NOT NULL DEFAULT '', dept VARCHAR(10) NOT NULL DEFAULT '',
     folder VARCHAR(255) NOT NULL, data LONGTEXT NOT NULL, status ENUM('draft','submitted','proceeded','finalised') NOT NULL DEFAULT 'draft',
     self_total DECIMAL(5,1) NULL, final_total DECIMAL(5,1) NULL, submitted_at DATETIME NULL, proceeded_at DATETIME NULL, proceeded_by VARCHAR(40) NULL,
-    finalised_at DATETIME NULL, finalised_by VARCHAR(40) NULL, recorded TINYINT(1) NOT NULL DEFAULT 0,
+    finalised_at DATETIME NULL, finalised_by VARCHAR(40) NULL, recorded TINYINT(1) NOT NULL DEFAULT 0, removed_at DATETIME NULL, removed_by VARCHAR(40) NULL,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE KEY one_per_period (kind, owner, year, term), KEY by_dept (dept, kind)) ${T}`,
   `CREATE TABLE IF NOT EXISTS review_marks (appraisal_id INT UNSIGNED NOT NULL, stage ENUM(${list(C.LEVELS)}) NOT NULL, section VARCHAR(10) NOT NULL,
@@ -63,7 +63,7 @@ const MYSQL_SCHEMA = [
   `CREATE TABLE IF NOT EXISTS appraisals (id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL CHECK (kind IN (${list(C.KINDS)})), owner TEXT NOT NULL COLLATE NOCASE,
     year TEXT NOT NULL, term TEXT NOT NULL DEFAULT '', name TEXT NOT NULL DEFAULT '', designation TEXT NOT NULL DEFAULT '', dept TEXT NOT NULL DEFAULT '', folder TEXT NOT NULL, data TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','submitted','proceeded','finalised')), self_total REAL NULL, final_total REAL NULL,
-    submitted_at TEXT NULL, proceeded_at TEXT NULL, proceeded_by TEXT NULL, finalised_at TEXT NULL, finalised_by TEXT NULL, recorded INTEGER NOT NULL DEFAULT 0,
+    submitted_at TEXT NULL, proceeded_at TEXT NULL, proceeded_by TEXT NULL, finalised_at TEXT NULL, finalised_by TEXT NULL, recorded INTEGER NOT NULL DEFAULT 0, removed_at TEXT NULL, removed_by TEXT NULL,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, UNIQUE (kind, owner, year, term))`,
   'CREATE INDEX IF NOT EXISTS by_dept ON appraisals (dept, kind)',
   `CREATE TABLE IF NOT EXISTS review_marks (appraisal_id INTEGER NOT NULL REFERENCES appraisals (id) ON DELETE CASCADE, stage TEXT NOT NULL CHECK (stage IN (${list(C.LEVELS)})),
@@ -80,6 +80,8 @@ const SCHEMA = MYSQL ? MYSQL_SCHEMA : SQLITE_SCHEMA;
 const run = s => (MYSQL ? mysql().query(s) : sqlite().exec(s));
 const setup = async () => {   // safe to run again
   for (const s of SCHEMA) await run(s);
+  for (const c of ['removed_at ' + (MYSQL ? 'DATETIME' : 'TEXT') + ' NULL', 'removed_by ' + (MYSQL ? 'VARCHAR(40)' : 'TEXT') + ' NULL'])   // deleted by the Super Admin (tables made before)
+    try { await run(`ALTER TABLE appraisals ADD COLUMN ${c}`); } catch { /* already there */ }
   try { await run(`ALTER TABLE accounts ADD COLUMN must_change ${MYSQL ? 'TINYINT(1)' : 'INTEGER'} NOT NULL DEFAULT 0`); } catch { /* already there (tables made before the one-time passwords) */ }
   // a role or review level added since a table was made (the Super Admin): MySQL widens its list; SQLite cannot change a CHECK, so the
   // table is rebuilt with every row kept
@@ -93,7 +95,7 @@ const setup = async () => {   // safe to run again
 };
 
 // ---- appraisals
-const toRow = r => r && { id: Number(r.id), kind: r.kind, owner: r.owner, year: r.year, term: r.term || '', folder: r.folder, status: r.status, dept: r.dept, name: r.name, data: JSON.parse(r.data) };
+const toRow = r => r && { id: Number(r.id), kind: r.kind, owner: r.owner, year: r.year, term: r.term || '', folder: r.folder, status: r.status, dept: r.dept, name: r.name, removed: !!r.removed_at, data: JSON.parse(r.data) };
 // one appraisal (owner = faculty code or username; matching ignores upper / lower case, like the folders did); term = '' (whole year) or S1 / S2
 async function find(kind, owner, year, term = '') { const [r] = await q('SELECT * FROM appraisals WHERE kind = ? AND owner = ? AND year = ? AND term = ?', [kind, owner, year, term]); return toRow(r); }
 const all = async kind => (await q('SELECT * FROM appraisals WHERE kind = ? ORDER BY dept, owner, term', [kind])).map(toRow);
@@ -118,12 +120,37 @@ async function create({ kind, owner, year, term = '', folder, data }) {
 }
 
 const byId = async id => toRow((await q('SELECT * FROM appraisals WHERE id = ?', [id]))[0]);
+
+// One form per person and year. Forms started while a form had two semesters (S1 / S2) are folded into the yearly form: a person with one
+// such form keeps it as their yearly form, everything in it; a person with several keeps the most complete (finalised, then submitted, then the
+// most recently changed) and the others are taken out and returned, so that their files can be put aside. Safe to run on every start.
+async function oneFormPerYear(kinds) {
+  if (!kinds.length) return [];
+  const rank = r => ({ finalised: 3, proceeded: 2, submitted: 2 }[r.status] || 0), groups = new Map(), removed = [];
+  for (const r of await q(`SELECT * FROM appraisals WHERE kind IN (${kinds.map(() => '?').join(', ')}) AND term IN ('', 'S1', 'S2')`, kinds)) {
+    const k = [r.kind, String(r.owner).toLowerCase(), r.year].join('|'); groups.set(k, [...(groups.get(k) || []), r]);
+  }
+  for (const rows of groups.values()) {
+    if (rows.every(r => !r.term)) continue;
+    rows.sort((a, b) => rank(b) - rank(a) || String(b.updated_at).localeCompare(String(a.updated_at)) || b.data.length - a.data.length);
+    const [keep, ...rest] = rows;
+    for (const r of rest) { await q('DELETE FROM appraisals WHERE id = ?', [r.id]); removed.push(toRow(r)); }   // its marks and notes go with it
+    if (keep.term) await q("UPDATE appraisals SET term = '' WHERE id = ?", [keep.id]);
+    await audit('system', 'one form per year', keep.id, `kept the ${keep.term || 'yearly'} form of ${keep.owner}` + (rest.length ? `; set aside ${rest.map(r => r.term || 'yearly').join(', ')}` : ''));
+  }
+  return removed;
+}
 // the lists of the review screens (no form content, just what a list shows)
 const listOf = (kinds, dept) => q(`SELECT id, kind, owner, name, designation, dept, term, status, self_total, final_total FROM appraisals
-  WHERE kind IN (${kinds.map(() => '?').join(', ')})${dept ? ' AND dept = ?' : ''} ORDER BY kind, dept, name, term`, dept ? [...kinds, dept] : kinds);
+  WHERE kind IN (${kinds.map(() => '?').join(', ')}) AND removed_at IS NULL${dept ? ' AND dept = ?' : ''} ORDER BY kind, dept, name, term`, dept ? [...kinds, dept] : kinds);
 const setStatus = (id, status, by) => q(`UPDATE appraisals SET status = ?, ${status === 'proceeded' ? 'proceeded_at = ?, proceeded_by = ?' : 'finalised_at = ?, finalised_by = ?'}, updated_at = ? WHERE id = ?`,
   [status, stamp(Date.now()), by, stamp(Date.now()), id]);
 const setFinal = (id, total) => q('UPDATE appraisals SET final_total = ? WHERE id = ?', [total, id]);
+// deleted by the Super Admin: a staff appraisal stays in the table, marked, so that reading the staff site's folder does not bring it back
+// (restore = unmark); any other appraisal is taken out with its marks and notes
+const setRemoved = (id, by) => q('UPDATE appraisals SET removed_at = ?, removed_by = ? WHERE id = ?', [by ? stamp(Date.now()) : null, by || null, id]);
+const drop = id => q('DELETE FROM appraisals WHERE id = ?', [id]);
+const removedList = () => q('SELECT id, kind, owner, name, designation, dept, status, removed_at, removed_by FROM appraisals WHERE removed_at IS NOT NULL ORDER BY removed_at DESC');
 
 // ---- review: marks and remarks of each level (hod / vp / principal / secretary) per section ('overall' = the overall remark), and notes
 // (verification checks, review controls, approval items) as key -> Yes/No + text
@@ -153,4 +180,4 @@ const ping = () => q('SELECT 1 AS ok');
 const close = async () => { if (pool) { const p = pool; pool = null; await p.end(); } if (lite) { lite.close(); lite = null; } };
 const where = () => (MYSQL ? `MySQL database "${process.env.DB_NAME || 'nscet_appraisal'}" on ${process.env.DB_HOST}` : `database file ${FILE}`);
 
-module.exports = { MYSQL, MYSQL_SCHEMA, setup, find, all, save, create, byId, listOf, setStatus, setFinal, marksOf, setMark, clearMark, notesOf, setNote, auditOf, findAccount, listAccounts, addAccount, setPassword, hasRole, setActive, activeHod, audit, ping, close, where };
+module.exports = { MYSQL, MYSQL_SCHEMA, setup, find, all, save, create, byId, oneFormPerYear, listOf, setStatus, setFinal, setRemoved, drop, removedList, marksOf, setMark, clearMark, notesOf, setNote, auditOf, findAccount, listAccounts, addAccount, setPassword, hasRole, setActive, activeHod, audit, ping, close, where };

@@ -238,8 +238,25 @@ const snap = () => { const out = {}; const walk = d => { for (const e of fs.read
     assert.match(acct(['disable', 'hodcse']), /disabled/); assert.match(acct(['add', 'hod', 'CSE', 'hodcse2', 'Second'], 'Secret@123\n'), /Added: HoD of CSE/);
     assert.match(acct(['enable', 'hodcse']), /already has an active HoD login \(hodcse2\)/);
     assert.match(acct(['add', 'librarian', 'lib1', 'Librarian One'], 'Lib@12345\n'), /Added: Librarian, Librarian One/);   // the new roles
+    // forms kept from the two-semester time, and a second copy of a proof: tidied on the next start (one form per person and year; put aside, not deleted)
+    const pf2 = (folder, files) => { const d = path.join(tmp, folder); fs.mkdirSync(d, { recursive: true }); for (const f of files) fs.writeFileSync(path.join(d, f), pdf); return folder; };
+    const fileRef = n => ({ stored: n, name: n, mime: 'application/pdf', pages: 1 });
+    await store.create({ kind: 'po', owner: 'po', year: C.YEAR, term: 'S1', folder: pf2('_leaders/Placement Officer (po)/2025-26/S1', ['offers.pdf', 'offers (2).pdf']),
+      data: { p1: { name: 'Placement Officer' }, ind: { A1: { rows: [{ g: 'r', v: { achieved: '72', target: '80', details: 'd' }, file: fileRef('offers.pdf') }] } }, tables: {}, self: {}, declared: false } });
+    await store.create({ kind: 'pd', owner: 'pd', year: C.YEAR, term: 'S1', folder: pf2('_leaders/Physical Director (pd)/2025-26/S1', ['old.pdf']),
+      data: { p1: { name: 'PD' }, ind: { A1: { rows: [{ g: 'r', v: { details: 'old' }, file: fileRef('old.pdf') }] } }, tables: {}, self: {}, declared: false } });
+    await store.create({ kind: 'pd', owner: 'pd', year: C.YEAR, term: '', folder: pf2('_leaders/Physical Director (pd)/2025-26', ['new.pdf']),
+      data: { p1: { name: 'Physical Director', employee_id: 'E7' }, ind: { A1: { rows: [{ g: 'r', v: { details: 'the newer and fuller form' }, file: fileRef('new.pdf') }] } }, tables: {}, self: {}, declared: false } });
     srv.kill(); await new Promise(r => setTimeout(r, 500)); srv = await boot();                                                   // a restart makes no login again and resets no password
     assert.equal((await store.listAccounts()).length, Auth.DEFAULT_LOGINS.length + 2);   // + hodcse2 and lib1
+    const poRows = (await store.all('po')).map(r => [r.term, r.data.ind.A1.rows[0].v.achieved]), pdRows = (await store.all('pd')).map(r => [r.term, r.data.p1.employee_id]);
+    assert.deepEqual([poRows, pdRows], [[['', '72']], [['', 'E7']]]);                                                                // one yearly form each, everything in it kept
+    const aside = path.join(tmp, '_removed', fs.readdirSync(path.join(tmp, '_removed'))[0]);
+    assert.deepEqual(fs.readdirSync(path.join(aside, 'pd pd S1')).sort(), ['form.json', 'old.pdf']);                                 // the older second form: put aside with its files
+    assert.equal(JSON.parse(fs.readFileSync(path.join(aside, 'pd pd S1', 'form.json'), 'utf8')).ind.A1.rows[0].v.details, 'old');
+    assert.ok(fs.existsSync(path.join(aside, 'unused files', '_leaders/Placement Officer (po)/2025-26/S1', 'offers (2).pdf')));   // the spare copy: put aside
+    assert.ok(fs.existsSync(path.join(tmp, '_leaders/Placement Officer (po)/2025-26/S1', 'offers.pdf')));                            // the proof in use stays
+    srv.kill(); await new Promise(r => setTimeout(r, 500)); srv = await boot(); assert.equal(fs.readdirSync(path.join(tmp, '_removed')).length, 1);   // nothing more the next time
     // ---- logins on the site
     assert.equal((await login('principal', 'wrong')).status, 401); assert.equal((await login('', '')).status, 400);
     const ok = await login('PRINCIPAL', 'Prin@12345'); assert.equal(ok.status, 200); assert.match(ok.headers.get('set-cookie'), /HttpOnly/);
@@ -329,6 +346,12 @@ const snap = () => { const out = {}; const walk = d => { for (const e of fs.read
     const pc2 = await as('Pc2', 'pc2@nscet'), pc2My = await (await pc2('/api/my')).json();
     assert.deepEqual([pc2My.user.username, pc2My.form.kind, pc2My.form.title, pc2My.items.map(x => x.term).join()], ['pc2', 'pc', FORMS.pc.title, 'year']);
     await pc2('/api/my/year/open', { method: 'POST' }); assert.equal((await (await pc2('/api/my/year')).json()).kind, 'pc');
+    assert.deepEqual((await (await pc2('/api/my')).json()).items.map(x => x.term), ['year']); assert.equal((await pc2('/api/my/year/open', { method: 'POST' })).status, 200);   // opening again: still one form
+    assert.equal((await store.all('pc')).filter(r => r.owner === 'pc2').length, 1);
+    // the same proof chosen again (after logging out and in, or after a failed save) reuses the stored copy; a different file with the same name does not
+    const upPc = async (name, buf) => { const fd = new FormData(); fd.append('code', 'A1'); fd.append('file', new Blob([buf], { type: 'application/pdf' }), name); return (await pc2('/api/my/year/upload', { method: 'POST', body: fd })).json(); };
+    const u1 = await upPc('drive.pdf', pdf), u2 = await upPc('drive.pdf', pdf), u3 = await upPc('drive.pdf', Buffer.concat([pdf, Buffer.from('\n% other')]));
+    assert.deepEqual([u1.stored, u2.stored, u3.stored], ['drive.pdf', 'drive.pdf', 'drive (2).pdf']);
     assert.equal((await store.find('pc', 'pc2', C.YEAR)).owner, 'pc2'); assert.equal(await store.find('pc', 'pc3', C.YEAR), null);   // each PC has an appraisal of their own
     const lib = await as('lib1', 'Lib@12345'), mineLib = await (await lib('/api/my')).json();
     assert.deepEqual(mineLib.items.map(x => x.term + ':' + x.status), ['year:not started']); assert.equal((await lib('/api/my/S1/open', { method: 'POST' })).status, 404);   // no semesters
@@ -408,6 +431,29 @@ const snap = () => { const out = {}; const walk = d => { for (const e of fs.read
     assert.equal((await ad('/api/admin/logins/admin/active', { method: 'POST', json: { active: false } })).status, 400);                  // not your own login
     assert.equal((await ad('/api/admin/logins/hodcse/active', { method: 'POST', json: { active: true } })).status, 409);                   // CSE already has hodcse2
     assert.equal((await ad('/api/admin/logins/nobody/password', { method: 'POST', json: { password: 'Whatever-123' } })).status, 404);
-    console.log('OK – scoring rules, logins, staff appraisals read from the staff folder (untouched), review chain, own appraisals, report PDF, dashboards, Super Admin');
+    // ---- the Super Admin deletes a duplicate: gone for every login (lists, dashboards, report); a staff one stays deleted, the staff folder untouched
+    const t2 = (await (await ad('/api/review/list')).json()).find(x => x.kind === 'staff' && x.owner === 'T2'), delA = id => ad(`/api/review/${id}/delete`, { method: 'POST' });
+    const dashBefore = (await (await sec('/api/dashboard')).json()).count;
+    assert.equal((await sec(`/api/review/${t2.id}/delete`, { method: 'POST' })).status, 403);                                       // only the Super Admin
+    assert.equal((await delA(t2.id)).status, 200);
+    for (const call of [ad, sec, vpc, pr]) assert.ok(!(await (await call('/api/review/list')).json()).some(x => x.id === t2.id));   // not in any list, also after the staff folder is read again
+    assert.equal((await sec('/api/review/' + t2.id)).status, 404); assert.equal((await ad('/api/review/' + t2.id)).status, 404);
+    assert.equal((await (await sec('/api/dashboard')).json()).count, dashBefore - 1); assert.ok(!(await (await ad('/api/dashboard?d=AI%26DS')).json()).count);
+    assert.ok(fs.existsSync(path.join(staffDir, 'Dept Case (T2)', '2025-26', 'form.json')));                                         // the staff site's files are not touched
+    const gone = await (await ad('/api/admin/deleted')).json(); assert.deepEqual(gone.map(g => [g.owner, g.removed_by]), [['T2', 'admin']]);
+    assert.equal((await sec('/api/admin/deleted')).status, 403);
+    assert.equal((await ad(`/api/admin/deleted/${t2.id}/restore`, { method: 'POST' })).status, 200);                                   // restored: back everywhere
+    assert.ok((await (await sec('/api/review/list')).json()).some(x => x.id === t2.id)); assert.equal((await (await sec('/api/dashboard')).json()).count, dashBefore);
+    assert.equal((await ad(`/api/admin/deleted/${t2.id}/restore`, { method: 'POST' })).status, 404);
+    // a leader's appraisal: taken out with its marks; content and files put aside; the owner can start a new one
+    const pcRow = await store.find('pc', 'pc2', C.YEAR), pcDir = path.join(tmp, pcRow.folder);
+    assert.equal((await delA(pcRow.id)).status, 200); assert.equal(await store.find('pc', 'pc2', C.YEAR), null);
+    assert.ok(!fs.existsSync(path.join(pcDir, 'drive.pdf')));
+    const bin = fs.readdirSync(path.join(tmp, '_removed')).map(d => path.join(tmp, '_removed', d, 'pc pc2 deleted')).find(d => fs.existsSync(d));
+    assert.ok(bin && fs.existsSync(path.join(bin, 'form.json')) && fs.existsSync(path.join(bin, 'drive.pdf')));
+    assert.deepEqual((await (await pc2('/api/my')).json()).items.map(x => x.term + ':' + x.status), ['year:not started']);
+    assert.equal((await pc2('/api/my/year/open', { method: 'POST' })).status, 200);
+    assert.match((await store.auditOf(t2.id)).map(x => x.who + ' ' + x.action).join('\n'), /admin deleted[\s\S]*admin restored/);
+    console.log('OK – scoring rules, logins, staff appraisals read from the staff folder (untouched), review chain, own appraisals, report PDF, dashboards, Super Admin, delete');
   } finally { srv.kill(); fs.rmSync(tmp, { recursive: true, force: true }); fs.rmSync(staffDir, { recursive: true, force: true }); await dropDb().catch(e => console.error('could not drop the test database:', e.message)); }
 })().catch(e => { console.error(e); process.exit(1); });

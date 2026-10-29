@@ -16,7 +16,7 @@ CREATE TABLE IF NOT EXISTS appraisals (id INT UNSIGNED AUTO_INCREMENT PRIMARY KE
   year CHAR(7) NOT NULL, term VARCHAR(2) NOT NULL DEFAULT '', name VARCHAR(100) NOT NULL DEFAULT '', designation VARCHAR(100) NOT NULL DEFAULT '', dept VARCHAR(10) NOT NULL DEFAULT '',
   folder VARCHAR(255) NOT NULL, data LONGTEXT NOT NULL, status ENUM('draft','submitted','proceeded','finalised') NOT NULL DEFAULT 'draft',
   self_total DECIMAL(5,1) NULL, final_total DECIMAL(5,1) NULL, submitted_at DATETIME NULL, proceeded_at DATETIME NULL, proceeded_by VARCHAR(40) NULL,
-  finalised_at DATETIME NULL, finalised_by VARCHAR(40) NULL, recorded TINYINT(1) NOT NULL DEFAULT 0,
+  finalised_at DATETIME NULL, finalised_by VARCHAR(40) NULL, recorded TINYINT(1) NOT NULL DEFAULT 0, removed_at DATETIME NULL, removed_by VARCHAR(40) NULL,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   UNIQUE KEY one_per_period (kind, owner, year, term), KEY by_dept (dept, kind)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
