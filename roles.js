@@ -83,6 +83,17 @@ module.exports = function roles(app, h) {
     await storeUpload(req, res, req.dir, req.form.ind);
   }));
   app.get('/api/my/:term/file/:stored', who, mine, wrap(async (req, res) => (req.row ? sendProof(res, req.dir, req.row.data, req.params.stored) : res.status(404).end())));
+  // Edit again: a form whose owner may take it back after submitting (the HoD's) becomes editable with everything saved, until it is
+  // finalised; the reviewers' marks stay, and it is reviewed again once submitted. Other forms are reopened by the Super Admin.
+  app.post('/api/my/:term/reopen', who, mine, wrap(async (req, res) => {
+    if (!req.row) return res.status(404).json({ error: 'Not started yet.' });
+    if (!req.form.reopen) return res.status(403).json({ error: 'Ask the Super Admin to reopen this form.' });
+    if (!req.row.data.submitted) return res.status(409).json({ error: 'This form is not submitted: you can still edit it.' });
+    if (req.row.status === 'finalised') return res.status(409).json({ error: 'It has been finalised by the reviewer. Ask the Super Admin to reopen it.' });
+    const { submitted, ...data } = req.row.data;
+    await store.save(req.row, data); await store.audit(req.user.username, 'edit again', req.row.id, `${C.ROLES[req.form.kind]} took the submitted form back to edit`);
+    res.json({ ok: true });
+  }));
   app.post('/api/my/:term/submit', who, mine, wrap(async (req, res) => {
     if (!req.row) return res.status(404).json({ error: 'Not started yet.' });
     if (req.row.data.submitted) return res.status(409).json(LOCKED);

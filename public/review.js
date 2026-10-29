@@ -451,7 +451,13 @@ function mineRefresh() {
   $('#tot').innerHTML = `Total <b>${r1(t.self)}</b>/100`;
   $('#sum').innerHTML = `<table><tr><th>Domain</th><th>Max</th><th>Self marks</th></tr>${Object.keys(f.domains).map(k => `<tr><td>${k}. ${esc(f.domains[k])}</td><td>${t.dom[k].max}</td><td>${r1(t.dom[k].self)}</td></tr>`).join('')}<tr><th>TOTAL</th><th>100</th><th>${r1(t.self)}</th></tr></table>`;
   const todo = $('#todo');
-  if (MLOCK) { todo.classList.add('ok'); todo.innerHTML = `<b>Submitted on ${esc(C.when(MD.submitted.at))}.</b> <span class="mute">This appraisal is locked and is with the ${REVIEWER[M.kind]} for review. To correct something, ask the administrator to reopen it.</span>`; }
+  if (MLOCK) {
+    const again = f.reopen && M.status !== 'finalised';   // the HoD can take it back until the reviewer finalises it
+    todo.classList.add('ok');
+    todo.innerHTML = `<b>Submitted on ${esc(C.when(MD.submitted.at))}.</b> <span class="mute">It is with the ${REVIEWER[M.kind]} for review. ${again
+      ? 'To change something, click Edit again: everything you saved stays, and you submit it again when you are done.'
+      : M.status === 'finalised' ? 'It has been finalised; to correct something, ask the Super Admin to reopen it.' : 'To correct something, ask the Super Admin to reopen it.'}</span>${again ? ' <button class="alt" data-again>Edit again</button>' : ''}`;
+  }
   else {
     const pr = C.problemsFor(f, MD), open = !!(todo.querySelector('details') || {}).open;
     todo.classList.toggle('ok', !pr.length);
@@ -495,6 +501,7 @@ function mineClick(ev) {
   if (ds.goto) { ev.preventDefault(); document.getElementById(ds.goto)?.scrollIntoView({ behavior: 'smooth', block: 'start' }); return; }
   if ('save' in ds) return saveMine().catch(() => {});
   if ('submit' in ds) return submitMine();
+  if ('again' in ds) return editAgain().catch(fail);
   if (MLOCK) return;
   if (ds.add) { const [c, g] = ds.add.split('.'); MD.ind[c].rows.push({ g, v: {} }); renderMine(indOf(c)); }
   else if (ds.rm) { const [c, i] = ds.rm.split('.'); if (C.started(MD.ind[c].rows[i]) && !confirm('Remove this row? Proof numbers will be renumbered.')) return; MD.ind[c].rows.splice(i, 1); renderMine(indOf(c)); }
@@ -513,6 +520,11 @@ async function saveMine() {
     await api(mUrl(), { method: 'PUT', body: { p1: MD.p1, ind: MD.ind, tables: MD.tables, self: MD.self, declared: MD.declared } });
     pending = false; s().textContent = 'Saved ' + new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   } catch (e) { s().textContent = 'Not saved: ' + e.message; throw e; }
+}
+// Edit again (the HoD's own form): back to editable with everything saved; submitted again when done
+async function editAgain() {
+  if (!confirm(`Edit your submitted appraisal again?\n\nEverything you saved stays. It goes back to "being filled" and the ${REVIEWER[M.kind]} sees it again only after you submit it again.`)) return;
+  await api(mUrl() + '/reopen', { method: 'POST' }); await openMine(M.term); scrollTo(0, 0);
 }
 async function submitMine() {
   const miss = C.problemsFor(M.form, MD);

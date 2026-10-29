@@ -34,6 +34,7 @@
   const HOD = {
     kind: 'hod', title: 'Self-Appraisal Form – Head of the Department', period: 'year', reviewer: 'Principal',
     optional: true,   // nothing is compulsory: fill what applies, anything left empty gets 0 marks, submit any time
+    reopen: true,     // the HoD may take a submitted form back (Edit again) with everything saved, until it is finalised
     intro: 'Fill one form for the whole academic year. Nothing is compulsory: fill in what applies to you; a section left empty gets 0 marks. The marks for each level are given in the scoring sheet itself. Number your proofs as A1-01, A1-02, B1-01 … and attach them in that order.',
     p1: [{ k: 'name', label: 'Name' }, { k: 'faculty_id', label: 'Faculty ID' }, { k: 'designation', label: 'Designation' }, { k: 'dept', label: 'Department', type: 'select', options: DEPTS },
       { k: 'charge_date', label: 'Date of taking charge as HoD', type: 'date' }, { k: 'courses', label: 'Courses handled', long: true }, { k: 'strength', label: 'No. of faculty / students in the department' }],

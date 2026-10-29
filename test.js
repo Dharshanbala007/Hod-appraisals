@@ -371,6 +371,19 @@ const snap = () => { const out = {}; const walk = d => { for (const e of fs.read
     // ... and on a HoD appraisal; the VP's and Principal's own forms stay view only for the Super Admin
     const hodR = await (await ad('/api/review/' + hodRow.id, { method: 'PUT', json: { marks: { C1: { marks: '6', remark: 'minutes seen' } } } })).json(); assert.deepEqual([hodR.totals.rows.C1.final, hodR.totals.final], [6, 6]);
     assert.equal((await (await ad('/api/review/' + prRow.id)).json()).can.edit, false); assert.equal((await ad('/api/review/' + prRow.id, { method: 'PUT', json: { marks: { A1: { marks: '1' } } } })).status, 403);
+    // Edit again: the HoD takes the submitted form back with everything saved, changes it and submits again (until it is finalised)
+    assert.equal((await hod('/api/my/year', { method: 'PUT', json: { p1: { courses: 'kept' }, ind: {}, declared: true } })).status, 409);   // submitted: locked
+    assert.equal((await hod('/api/my/year/reopen', { method: 'POST' })).status, 200);
+    let again = await (await hod('/api/my/year')).json(); assert.deepEqual([again.status, again.data.submitted, again.data.p1.name], ['draft', undefined, 'Second']);   // saved details kept
+    assert.equal((await hod('/api/my/year/reopen', { method: 'POST' })).status, 409);                                                   // not submitted now
+    assert.equal((await hod('/api/my/year', { method: 'PUT', json: { ...again.data, p1: { ...again.data.p1, courses: 'CS3591' } } })).status, 200);
+    assert.equal((await hod('/api/my/year/submit', { method: 'POST' })).status, 200);
+    again = await (await hod('/api/my/year')).json(); assert.deepEqual([again.status, again.data.p1.courses], ['submitted', 'CS3591']);
+    assert.equal((await (await ad('/api/review/' + hodRow.id)).json()).totals.rows.C1.admin, 6);                                     // the reviewers' marks stay
+    assert.match((await (await ad(`/api/review/${hodRow.id}/log`)).json()).map(x => x.who + ' ' + x.action).join('\n'), /hodcse2 edit again/);
+    assert.equal((await (await pr(`/api/review/${hodRow.id}/finalise`, { method: 'POST' })).json()).status, 'finalised');
+    assert.equal((await hod('/api/my/year/reopen', { method: 'POST' })).status, 409);                                                   // finalised: the Super Admin reopens it
+    assert.equal((await lib('/api/my/year/reopen', { method: 'POST' })).status, 403);                                                    // only the HoD's form has Edit again
     assert.equal((await (await ad('/api/dashboard')).json()).count, (await (await sec('/api/dashboard')).json()).count);            // drafts stay out of the statistics
     assert.equal((await (await ad('/api/dashboard?d=CSE')).json()).count, 1);
     // reopen: the Principal's submitted form goes back to the Principal (marks kept); not a staff form, and nobody else can
