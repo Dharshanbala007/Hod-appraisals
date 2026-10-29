@@ -138,7 +138,7 @@ async function reportPage(kind, dept, sort) {
   const secs = xs => (xs.length ? xs.map(x => `<div><b>${x.code}</b> ${esc(x.title)} <span class="mute">${r1(x.marks)}/${x.max}</span></div>`).join('') : '<span class="mute">–</span>');
   const done = rows.filter(x => x.d), avg = k => (done.length ? r1(done.reduce((s, x) => s + x[k], 0) / done.length) : '–');
   const title = (kind === 'staff' ? 'Staff' : C.ROLES[kind]) + (dept ? ' – ' + dept : ''), q = `kind=${kind}${dept ? '&d=' + encodeURIComponent(dept) : ''}`;
-  const status = st => { const w = C.reportStatus(kind, st, STATUS); return w === 'Proceed' ? '<span class="badge st-finalised">Proceed</span>' : w === 'Not proceed' ? '<span class="badge st-draft">Not proceed</span>' : badge(st); };
+  const status = st => { const w = C.reportStatus(kind, st, STATUS); return w === 'Approved' ? '<span class="badge st-finalised">Approved</span>' : w === 'Not Approved' ? '<span class="badge st-draft">Not Approved</span>' : badge(st); };
   app.onclick = app.oninput = null;
   app.onchange = e => { if (e.target.matches('[data-rsort]')) go(`#rep=${kind}${dept ? '&d=' + encodeURIComponent(dept) : ''}&s=${e.target.value}`); };
   app.innerHTML = userline() + `<div class="bar noprint"><button class="alt" data-go="${esc(LAST)}">← Back</button><b>Report</b><span class="mute">${esc(title)}</span>
